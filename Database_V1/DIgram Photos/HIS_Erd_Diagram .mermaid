@@ -1,0 +1,618 @@
+erDiagram
+    %% Core System Module
+    Users {
+        int UserID PK
+        nvarchar UserName UK
+        datetime BirthDate
+        nvarchar Email UK
+        nvarchar PasswordHash
+        datetime2 CreatedAt
+        datetime2 LastLoginAt
+        int CreatedBy FK
+    }
+    
+    Roles {
+        int RoleID PK
+        nvarchar RoleName
+        nvarchar Description
+        nvarchar Permissions
+    }
+    
+    UserRoles {
+        int UserID PK,FK
+        int RoleID PK,FK
+        datetime AssignedAt
+        int AssignedBy FK
+        datetime2 CreatedAt
+    }
+    
+    Departments {
+        int DepartmentID PK
+        varchar DepartmentName UK
+        varchar DepartmentCode UK
+        int ManagerID FK
+        datetime CreatedAt
+        int CreatedBy FK
+        bit IsActive
+    }
+    
+    Specializations {
+        int SpecializationID PK
+        nvarchar SpecializationName UK
+        nvarchar SpecializationCode UK
+        nvarchar Description
+    }
+    
+    Staff {
+        int StaffID PK
+        int UserID FK
+        nvarchar FullName
+        char Gender
+        nvarchar Phone
+        int DepartmentID FK
+        int SpecializationID FK
+        nvarchar Position
+        nvarchar MobileNumber
+        nvarchar Address
+        date HireDate
+        decimal Salary
+        nvarchar LicenseNumber
+        bit IsActive
+    }
+    
+    PhysicianSchedules {
+        int PhysicianID PK,FK
+        tinyint DayOfWeek PK
+        time SlotStart PK
+        time SlotEnd
+        nvarchar Location
+        int Capacity
+        bit IsActive
+    }
+
+    %% Patient Management Module
+    Patient {
+        int PatientID PK
+        nvarchar MRN UK
+        nvarchar NationalID UK
+        nvarchar FirstName
+        nvarchar MiddleName
+        nvarchar LastName
+        date DateOfBirth
+        nvarchar Gender
+        nvarchar BloodType
+        nvarchar PhoneNumber
+        nvarchar MobileNumber
+        nvarchar Email
+        nvarchar Address
+        nvarchar City
+        nvarchar Country
+        nvarchar EmergencyContactName
+        nvarchar EmergencyContactPhone
+        nvarchar Allergies
+        nvarchar MaritalStatus
+        bit IsActive
+        datetime2 CreatedAt
+        int CreatedBy FK
+    }
+    
+    Appointments {
+        int AppointmentID PK
+        int PatientID FK
+        int PhysicianID FK
+        int DepartmentID FK
+        datetime AppointmentDateTime
+        nvarchar Status
+        int Duration
+        nvarchar Priority
+        bit ReminderSent
+        nvarchar Complaint
+        datetime2 CreatedAt
+        int CreatedBy FK
+    }
+
+    %% Clinical Data Module
+    Encounters {
+        int EncounterID PK
+        nvarchar EncounterNumber UK
+        int PatientID FK
+        int PhysicianID FK
+        int AppointmentID FK
+        datetime2 EncounterDate
+        nvarchar EncounterType
+        nvarchar ReviewOfSystems
+        nvarchar PhysicalExamination
+        datetime StartDateTime
+        datetime EndDateTime
+        nvarchar Status
+        nvarchar FollowUpInstructions
+        datetime2 CreatedAt
+        int CreatedBy FK
+    }
+    
+    VitalSigns {
+        int VitalSignID PK
+        int EncounterID FK
+        decimal Temperature
+        int BloodPressure
+        int HeartRate
+        int RespiratoryRate
+        decimal OxygenSaturation
+        decimal Height
+        decimal Weight
+        decimal BMI
+        decimal BloodGlucose
+        nvarchar Notes
+        int PainScore
+        datetime2 RecordedAt
+        int RecordedBy FK
+    }
+    
+    Diagnoses {
+        int DiagnosisID PK
+        int EncounterID FK
+        int PatientID FK
+        nvarchar DiagnosisCode
+        nvarchar DiagnosisDescription
+        nvarchar DiagnosisType
+        nvarchar Status
+        date DiagnosisDate
+        int DiagnosedBy FK
+        nvarchar Notes
+    }
+    
+    Orders {
+        int OrderID PK
+        int EncounterID FK
+        int OrderingPhysicianID FK
+        nvarchar OrderDescription
+        nvarchar OrderType
+        datetime OrderDate
+        nvarchar Priority
+        nvarchar Status
+    }
+
+    %% Emergency Module
+    ER_Visit {
+        int ERVisitID PK
+        int EncounterID FK
+        int TriageLevel
+        nvarchar ChiefComplaint
+        nvarchar ArrivalMode
+        datetime ArrivalDateTime
+        nvarchar Disposition
+    }
+    
+    TriageAssessment {
+        int TriageID PK
+        int ERVisitID FK
+        nvarchar BP
+        int HR
+        decimal Temp
+        int RR
+        int SpO2
+        int PainScore
+        int AssessedBy FK
+        datetime AssessmentTime
+    }
+
+    %% Outpatient Module
+    OPD_Visit {
+        int OPDVisitID PK
+        int EncounterID FK
+        int AppointmentID FK
+        nvarchar VisitReason
+        nvarchar VisitStatus
+    }
+
+    %% Medication Management
+    Medications {
+        int MedicationID PK
+        nvarchar MedicationName
+        nvarchar GenericName
+        nvarchar Strength
+        nvarchar Form
+        nvarchar Route
+        nvarchar DrugClass
+        bit IsActive
+    }
+    
+    Prescriptions {
+        int PrescriptionID PK
+        int PatientID FK
+        int MedicationID FK
+        int PrescribedBy FK
+        nvarchar Dosage
+        nvarchar Frequency
+        int Duration
+        int Quantity
+        nvarchar Instructions
+        date StartDate
+        nvarchar Status
+        datetime2 CreatedAt
+    }
+
+    %% Inpatient Module
+    Wards {
+        int WardID PK
+        nvarchar WardName
+        int DepartmentID FK
+        nvarchar WardType
+        bit IsActive
+    }
+    
+    Beds {
+        int BedID PK
+        int WardID FK
+        nvarchar BedNumber
+        nvarchar BedStatus
+    }
+    
+    Admissions {
+        int AdmissionID PK
+        int PatientID FK
+        int EncounterID FK
+        int AdmittingPhysicianID FK
+        datetime2 AdmissionDate
+        datetime2 DischargeDate
+        nvarchar AdmittedFrom
+        int BedID FK
+        nvarchar AdmissionReason
+        nvarchar Status
+        decimal TotalCharges
+        datetime2 CreatedAt
+        int CreatedBy FK
+    }
+    
+    BedTransfers {
+        int TransferID PK
+        int AdmissionID FK
+        int FromBedID FK
+        int ToBedID FK
+        datetime2 TransferDate
+        nvarchar Reason
+        int OrderedBy FK
+    }
+    
+    NursingTasks {
+        int TaskID PK
+        int EncounterID FK
+        int OrderedBy FK
+        nvarchar TaskType
+        datetime ScheduledTime
+        datetime PerformedTime
+        int PerformedBy FK
+        nvarchar Status
+    }
+
+    %% Laboratory Module
+    LabTests {
+        int TestID PK
+        nvarchar TestCode
+        nvarchar TestName
+        nvarchar Unit
+        nvarchar ReferenceRange
+        datetime CreatedDate
+        int CreatedBy FK
+    }
+    
+    LabPanels {
+        int PanelID PK
+        nvarchar PanelCode UK
+        nvarchar PanelName
+    }
+    
+    PanelTests {
+        int PanelID PK,FK
+        int TestID PK,FK
+        int DisplayOrder
+        int CreatedBy FK
+    }
+    
+    LabOrders {
+        int LabOrderID PK,FK
+        nvarchar SpecimenType
+        bit FastingRequired
+        int CollectedBy FK
+    }
+    
+    Specimen {
+        int SpecimenID PK
+        int LabOrderID FK
+        datetime CollectionDateTime
+        int CollectedBy FK
+        nvarchar Status
+        int CreatedBy FK
+    }
+    
+    LabResults {
+        int ResultID PK
+        int LabOrderID FK
+        int TestID FK
+        nvarchar ResultValue
+        char AbnormalFlag
+        datetime ResultDateTime
+        int VerifiedBy FK
+    }
+
+    %% Radiology Module
+    RadiologyOrders {
+        int RadiologyOrderID PK,FK
+        nvarchar Modality
+        nvarchar BodyPart
+        bit Contrast
+    }
+    
+    ImagingStudy {
+        int StudyID PK
+        int RadiologyOrderID FK
+        nvarchar AccessionNumber UK
+        datetime StudyDateTime
+        nvarchar Modality
+        int PerformedBy FK
+        nvarchar Status
+    }
+    
+    ImagingSeries {
+        int SeriesID PK
+        int StudyID FK
+        int SeriesNumber
+        nvarchar SeriesDescription
+    }
+    
+    PACSImage {
+        int ImageID PK
+        int SeriesID FK
+        nvarchar SOPInstanceUID UK
+        nvarchar StorageURI
+        int ImageNumber
+    }
+    
+    RadiologyReport {
+        int ReportID PK
+        int StudyID FK,UK
+        nvarchar ReportText
+        nvarchar Findings
+        nvarchar Impression
+        int ReportedBy FK
+        datetime ReportDateTime
+        nvarchar Status
+    }
+
+    %% Surgery Module
+    OR_Rooms {
+        int ORRoomID PK
+        nvarchar RoomName
+        int DepartmentID FK
+        nvarchar Status
+    }
+    
+    Procedures {
+        int ProcedureID PK
+        nvarchar ProcedureCode
+        nvarchar ProcedureName
+        int DefaultDurationMin
+        int CreatedBy FK
+    }
+    
+    SurgerySchedule {
+        int SurgeryID PK
+        int OrderID FK
+        int AdmissionID FK
+        int OPDVisitID FK
+        int ORRoomID FK
+        datetime ScheduledStart
+        datetime ScheduledEnd
+        nvarchar AnesthesiaType
+        int PrimarySurgeonID FK
+        int CreatedBy FK
+        nvarchar Status
+    }
+    
+    SurgeryTeam {
+        int SurgeryTeamID PK
+        int SurgeryID FK
+        int StaffID FK
+        nvarchar RoleInSurgery
+    }
+    
+    SurgeryNotes {
+        int SurgeryNoteID PK
+        int SurgeryID FK
+        nvarchar IntraOpNotes
+        nvarchar Complications
+        decimal BloodLoss
+        nvarchar ImplantsUsed
+    }
+
+    %% Financial Module
+    Services {
+        int ServiceID PK
+        nvarchar ServiceCode UK
+        nvarchar ServiceName
+        nvarchar ServiceCategory
+        int DepartmentID FK
+        decimal StandardPrice
+        decimal Cost
+        bit IsActive
+        datetime CreatedDate
+    }
+    
+    Payers {
+        int PayerID PK
+        nvarchar PayerName
+        nvarchar Type
+    }
+    
+    InsurancePlans {
+        int PlanID PK
+        int PayerID FK
+        nvarchar PlanName
+        nvarchar PlanCode
+        bit IsActive
+    }
+    
+    PatientInsurance {
+        int PatientInsuranceID PK
+        int PatientID FK
+        int PlanID FK
+        nvarchar InsuranceNumber
+    }
+    
+    Invoices {
+        int InvoiceID PK
+        nvarchar InvoiceNumber UK
+        int PatientID FK
+        int EncounterID FK
+        int PayerID FK
+        datetime InvoiceDate
+        date DueDate
+        nvarchar Status
+        decimal TotalAmount
+        decimal InsuranceAmount
+        decimal DiscountAmount
+        decimal PaidAmount
+        decimal BalanceAmount
+        int CreatedBy FK
+        datetime CreatedDate
+    }
+    
+    InvoiceLines {
+        int LineID PK
+        int InvoiceID FK
+        int ServiceID FK
+        int OrderID FK
+        int Quantity
+        decimal UnitPrice
+        decimal LineAmount
+        nvarchar Description
+    }
+    
+    Payments {
+        int PaymentID PK
+        int InvoiceID FK
+        datetime PaymentDate
+        nvarchar PaymentMethod
+        decimal Amount
+        nvarchar ReferenceNumber
+        int PayerID FK
+        int ReceivedBy FK
+    }
+    
+    Authorizations {
+        int AuthID PK
+        int OrderID FK
+        int PlanID FK
+        char Approved
+        decimal ApprovedAmount
+    }
+
+    %% Core Relationships
+    Users ||--o{ UserRoles : has
+    Roles ||--o{ UserRoles : assigned
+    Users ||--o{ Staff : creates
+    Staff ||--o| Departments : belongs_to
+    Staff ||--o| Specializations : has
+    Departments ||--o{ Staff : manages
+    Staff ||--o{ PhysicianSchedules : has_schedule
+
+    %% Patient Relationships
+    Users ||--o{ Patient : creates
+    Patient ||--o{ Appointments : makes
+    Staff ||--o{ Appointments : assigned_to
+    Departments ||--o{ Appointments : in
+    Patient ||--o{ Encounters : has
+    Staff ||--o{ Encounters : provides
+    Appointments ||--o| Encounters : results_in
+
+    %% Clinical Relationships
+    Encounters ||--o{ VitalSigns : records
+    Staff ||--o{ VitalSigns : records
+    Encounters ||--o{ Diagnoses : has
+    Patient ||--o{ Diagnoses : receives
+    Staff ||--o{ Diagnoses : makes
+    Encounters ||--o{ Orders : generates
+    Staff ||--o{ Orders : creates
+
+    %% Emergency Relationships
+    Encounters ||--|| ER_Visit : emergency_encounter
+    ER_Visit ||--o{ TriageAssessment : assessed_in
+    Staff ||--o{ TriageAssessment : performs
+
+    %% Outpatient Relationships
+    Encounters ||--|| OPD_Visit : outpatient_encounter
+    Appointments ||--o| OPD_Visit : scheduled_for
+
+    %% Medication Relationships
+    Patient ||--o{ Prescriptions : receives
+    Medications ||--o{ Prescriptions : prescribed_as
+    Staff ||--o{ Prescriptions : prescribes
+
+    %% Inpatient Relationships
+    Patient ||--o{ Admissions : admitted
+    Encounters ||--o| Admissions : admits_from
+    Staff ||--o{ Admissions : admits
+    Beds ||--o{ Admissions : occupies
+    Wards ||--o{ Beds : contains
+    Departments ||--o{ Wards : operates
+    Admissions ||--o{ BedTransfers : transferred_from
+    Beds ||--o{ BedTransfers : from_bed
+    Beds ||--o{ BedTransfers : to_bed
+    Staff ||--o{ BedTransfers : orders
+    Encounters ||--o{ NursingTasks : has_tasks
+    Staff ||--o{ NursingTasks : orders
+    Staff ||--o{ NursingTasks : performs
+
+    %% Laboratory Relationships
+    Orders ||--o| LabOrders : lab_order
+    Staff ||--o{ LabOrders : collects
+    LabOrders ||--o{ Specimen : produces
+    Staff ||--o{ Specimen : collects
+    Staff ||--o{ Specimen : processes
+    LabOrders ||--o{ LabResults : generates
+    LabTests ||--o{ LabResults : tested_with
+    Staff ||--o{ LabResults : verifies
+    LabPanels ||--o{ PanelTests : contains
+    LabTests ||--o{ PanelTests : included_in
+    Staff ||--o{ PanelTests : creates
+    Staff ||--o{ LabTests : creates
+
+    %% Radiology Relationships
+    Orders ||--o| RadiologyOrders : radiology_order
+    RadiologyOrders ||--o{ ImagingStudy : scheduled_for
+    Staff ||--o{ ImagingStudy : performs
+    ImagingStudy ||--o{ ImagingSeries : contains
+    ImagingSeries ||--o{ PACSImage : includes
+    ImagingStudy ||--o| RadiologyReport : reported_on
+    Staff ||--o{ RadiologyReport : reports
+
+    %% Surgery Relationships
+    Departments ||--o{ OR_Rooms : operates
+    Users ||--o{ Procedures : creates
+    Orders ||--o{ SurgerySchedule : surgery_order
+    Admissions ||--o| SurgerySchedule : inpatient_surgery
+    OPD_Visit ||--o| SurgerySchedule : outpatient_surgery
+    OR_Rooms ||--o{ SurgerySchedule : scheduled_in
+    Staff ||--o{ SurgerySchedule : primary_surgeon
+    Staff ||--o{ SurgerySchedule : creates
+    SurgerySchedule ||--o{ SurgeryTeam : has_team
+    Staff ||--o{ SurgeryTeam : member_of
+    SurgerySchedule ||--o| SurgeryNotes : documented_in
+
+    %% Financial Relationships
+    Departments ||--o{ Services : provides
+    Payers ||--o{ InsurancePlans : offers
+    Patient ||--o{ PatientInsurance : covered_by
+    InsurancePlans ||--o{ PatientInsurance : covers
+    Patient ||--o{ Invoices : billed_to
+    Encounters ||--o{ Invoices : generates
+    Payers ||--o{ Invoices : pays
+    Staff ||--o{ Invoices : creates
+    Invoices ||--o{ InvoiceLines : contains
+    Services ||--o{ InvoiceLines : billed_as
+    Orders ||--o{ InvoiceLines : charged_for
+    Invoices ||--o{ Payments : paid_with
+    Payers ||--o{ Payments : makes
+    Staff ||--o{ Payments : receives
+    Orders ||--o{ Authorizations : requires
+    InsurancePlans ||--o{ Authorizations : authorizes

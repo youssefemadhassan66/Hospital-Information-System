@@ -1,0 +1,32 @@
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          HOSPITAL INFORMATION SYSTEM                    │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   CORE MODULE   │    │ PATIENT MODULE  │    │CLINICAL MODULE  │
+│                 │    │                 │    │                 │
+│ • Users         │    │ • Patient       │    │ • Orders        │
+│ • Roles         │◄──►│ • Appointments  │◄──►│ • Medications   │
+│ • Staff         │    │ • Encounters    │    │ • Prescriptions │
+│ • Departments   │    │ • VitalSigns    │    │ • Diagnoses     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│INPATIENT MODULE │    │EMERGENCY MODULE │    │SURGERY MODULE   │
+│                 │    │                 │    │                 │
+│ • Admissions    │    │ • ER_Visit      │    │ • OR_Rooms      │
+│ • Wards         │◄──►│ • TriageAssess  │◄──►│ • Procedures    │
+│ • Beds          │    │ • (Uses Clinical│    │ • SurgerySchedule│
+│ • Transfers     │    │   & Patient)    │    │ • SurgeryTeam   │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+         ▼                       ▼                       ▼
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│ANCILLARY MODULE │    │OUTPATIENT MODULE│    │FINANCE MODULE   │
+│                 │    │                 │    │                 │
+│ • Lab System    │    │ • OPD_Visit     │    │ • Services      │
+│ • Radiology     │◄──►│ • (Uses Patient │◄──►│ • Billing       │
+│ • PACS          │    │   & Clinical)   │    │ • Insurance     │
+│ • Reports       │    │                 │    │ • Payments      │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
