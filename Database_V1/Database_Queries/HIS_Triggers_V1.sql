@@ -615,7 +615,7 @@ BEGIN
         i.VitalSignId,
         'Critical Values Detected: ' +
         CASE 
-            WHEN i.Temperature > 39.5 OR i.Temperature < 35 THEN 'Temperature=' + CAST(i.Temperature AS VARCHAR) + '°C; '
+            WHEN i.Temperature > 39.5 OR i.Temperature < 35 THEN 'Temperature=' + CAST(i.Temperature AS VARCHAR) + 'ï¿½C; '
             ELSE ''
         END +
         CASE 

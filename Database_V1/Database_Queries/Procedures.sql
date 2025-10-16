@@ -1080,5 +1080,18 @@ GO
 ----------------------------
 -- Paitent Procedures
 ---------------------------
-
-
+Create procedure Create_Paitent
+    @PaitentID INT,
+    @PaitentName NVARCHAR(100),
+    @PaitentAge INT,
+    @PaitentGender NVARCHAR(10),
+    @PaitentPhone NVARCHAR(10),
+    @PaitentEmail NVARCHAR(100)
+AS 
+BEGIN
+    BEGIN TRY
+    BEGIN TRANSACTION
+        
+    END TRY
+    SET NOCOUNT ON;
+END
