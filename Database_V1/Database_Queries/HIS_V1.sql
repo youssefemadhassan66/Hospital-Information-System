@@ -72,17 +72,28 @@ CREATE TABLE Core_system.Staff(
 -- SCHEDULING Tables
 -- =============================================
 
-CREATE TABLE Scheduling.PhysicianSchedules (
-    PhysicianID INT NOT NULL,
-    DayOfWeek TINYINT CHECK (DayOfWeek BETWEEN 1 AND 7),
-    SlotStart TIME NOT NULL,
-    SlotEnd TIME NOT NULL,
-    Location NVARCHAR(50),
-    Capacity INT DEFAULT 1,
-    IsActive BIT DEFAULT 1,
-    PRIMARY KEY (PhysicianID, DayOfWeek, SlotStart),
-    CONSTRAINT FK_PhysicianSchedules_Staff FOREIGN KEY (PhysicianID) REFERENCES Core_system.Staff(StaffID)
-);
+CREATE TABLE Scheduling.DoctorsSchedules(
+	ScheduleID int primary key identity(1,1),
+	DoctorID int not null , 
+	DayOfTheWeek TinyInt Null,
+	SpecificDate Date null,
+	StartTime time not null ,
+	EndTime time not null ,
+	SlotDuration  int Default 30, 
+	MaxAppointments INT DEFAULT 1,
+	IsRecurring Bit null,
+	EffectiveStart Date not null,
+	EffectiveEnd Date,
+	IsAvalibale BIT Not NULL,
+	CreatedAt datetime default GetDate(),
+	CreatedBy int ,
+	CONSTRAINT FK_Staff_Doctorid FOREIGN KEY (DoctorID) REFERENCES Core_system.Staff(StaffID),
+	CONSTRAINT Check_Time CHECK(EndTime>StartTime),
+	CONSTRAINT Check_Day_week CHECK(DayOfTheWeek >0 and DayOfTheWeek < 8 or DayOfTheWeek IS NULL),
+	CONSTRAINT CHK_DateOrDay CHECK (DayOfTheWeek IS NOT NULL OR SpecificDate IS NOT NULL),
+	CONSTRAINT FK_DoctorsSchedules_CreatedBy FOREIGN KEY (CreatedBy) REFERENCES Core_system.Staff(StaffID),
+
+	)
 
 -- =============================================
 -- PATIENT MANAGEMENT

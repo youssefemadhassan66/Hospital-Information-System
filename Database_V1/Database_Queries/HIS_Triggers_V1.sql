@@ -189,7 +189,7 @@ ON Clinical_Management.Encounters
 INSTEAD OF INSERT
 AS
 BEGIN
-    SET NOCOUNT ON;
+    SET NOCOUNT ON;+ 
     
     INSERT INTO Clinical_Management.Encounters (
         EncounterNumber, PatientId, PhysicianID, AppointmentId, EncounterDate,
