@@ -60,3 +60,56 @@ use HIS_V1
 
 ALTER TABLE Scheduling.Appointments
 add canelation_Reason nvarchar(100) null;
+
+go
+
+use HIS_V1
+-- First: Add VisitType to Appointments table
+ALTER TABLE Scheduling.Appointments
+ADD VisitType NVARCHAR(20) CHECK (VisitType IN (
+    'New Patient',
+    'Follow-up',
+    'Consultation',
+    'Procedure',
+    'Screening',
+    'Annual Checkup',
+    'Emergency'
+));
+
+-- Add VisitType to Encounters table
+ALTER TABLE Clinical_Management.Encounters
+ADD VisitType NVARCHAR(20) CHECK (VisitType IN (
+    'New Patient',
+    'Follow-up',
+    'Consultation',
+    'Procedure',
+    'Screening',
+    'Annual Checkup',
+    'Emergency'
+));
+
+
+GO 
+-- Remove Appointemnt for encounter and add queue to link with encounter and 
+
+use HIS_V1
+
+ALTER TABLE Clinical_Management.Encounters
+DROP CONSTRAINT FK_Encounters_Appointment
+
+ALTER TABLE Clinical_Management.Encounters
+DROP Column AppointmentId
+
+
+
+use HIS_V1
+
+
+ALTER TABLE Clinical_Management.Encounters
+ADD QueueId int
+
+go
+use HIS_V1
+ALTER TABLE Clinical_Management.Encounters
+ADD CONSTRAINT FK_Queue_Encounters (QueueId) REFERENCES Clinical_Management.PatientQueue(QueueID)
+

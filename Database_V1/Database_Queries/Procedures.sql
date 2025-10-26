@@ -1907,7 +1907,7 @@ GO
 -- =============================================
 -- APPOINTMENT SCHEDULING PROCEDURES
 -- =============================================
-CREATE OR ALTER PROCEDURE Add_Appointment 
+CREATE OR ALTER PROCEDURE Create_Appointment 
 @PatientID INT, @PhysicianID INT , @AppointmentDateTime DATETIME , @DepartmentID INT,
 @Status NVARCHAR(20),@Duration INT,@Priority NVARCHAR(30),@Complaint NVARCHAR(30)
 
@@ -2074,11 +2074,110 @@ GO
 
 GO
 
+--- will continou later 
+
+
+
+-- =============================================
+-- Encounter PROCEDURES
+-- =============================================
+GO
+CREATE PROCEDURE CreateEncounter
+    @EncounterNumber NVARCHAR(20),
+    @PatientId INT,
+    @DoctorId INT,
+    @AppointmentId INT = NULL,
+    @EncounterDate DATETIME2,
+    @EncounterType NVARCHAR(50),
+    @VisitType NVARCHAR(20) = NULL,
+    @ReviewOfSystems NVARCHAR(MAX) = NULL,
+    @StartDateTime DATETIME,
+    @EndDateTime DATETIME,
+    @Status NVARCHAR(20) = 'Active',
+    @FollowUpInstructions NVARCHAR(MAX) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    BEGIN TRY 
+    BEGIN TRANSACTION 
+
+    IF @PatientId IS NULL OR @DoctorId IS NULL OR @EncounterDate IS NULL OR @VisitType IS NULL OR @EncounterType IS NULL
+        THROW 50001,'Paitentid and DoctorID and Encounter Date and  Visit Type and EncounterTypr are required',1;
+
+      IF NOT EXISTS (SELECT 1 FROM Patient_Management.Patient WHERE PatientID = @PatientID AND IsActive = 1)
+            THROW 50002, 'Patient not found or inactive', 1;
+            
+        IF NOT EXISTS (
+            SELECT 1 
+            FROM Core_system.Staff s 
+            JOIN Core_system.Users us ON s.UserID = us.UserID 
+            JOIN Core_system.Roles r ON r.RoleID = us.RoleID  
+            WHERE s.StaffID = @DoctorId  
+            AND r.RoleName IN ('Doctor', 'Physician', 'Surgeon', 'Resident') 
+            AND s.IsActive = 1
+        )
+            THROW 50003, 'Physician not found or not an active doctor', 1;
+       
+         IF @EncounterDate <= GETDATE()
+            THROW 50004, 'Encounter date must be in the future', 1;
+        
+          IF @StartDateTime > @EndDateTime 
+            THROW 50005,'Time Error Start time can not be after end time',1;
+   
+        
+        Set @StartDateTime = GETDATE();
+
+    
 
 
 
 
 
+    
+    BEGIN TRY
+        INSERT INTO Clinical_Management.Encounters (
+            EncounterNumber,
+            PatientId,
+            PhysicianID,
+            AppointmentId,
+            EncounterDate,
+            EncounterType,
+            VisitType,
+            ReviewOfSystems,
+            StartDateTime,
+            EndDateTime,
+            Status,
+            FollowUpInstructions
+            
+        )
+        VALUES (
+            @EncounterNumber,
+            @PatientId,
+            @DoctorId,
+            @AppointmentId,
+            @EncounterDate,
+            @EncounterType,
+            @VisitType,
+            @ReviewOfSystems,
+            @StartDateTime,
+            @EndDateTime,
+            @Status,
+            @FollowUpInstructions
+        
+        )
+        COMMIT TRANSACTION; 
+        SELECT SCOPE_IDENTITY() AS EncounterId;
+
+    END TRY
+    BEGIN CATCH
+    if @@TRANCOUNT > 0 
+        Rollback Transaction;
+        Print 'Error Creating Encounter' + Error_Message();
+        THROW;
+    END CATCH
+END
+
+GO
 
 
 

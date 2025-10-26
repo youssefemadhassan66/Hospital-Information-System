@@ -160,6 +160,7 @@ CREATE TABLE Scheduling.Appointments (
     Status NVARCHAR(20) DEFAULT 'Scheduled' CHECK (Status IN ('Scheduled', 'Confirmed', 'In Progress', 'Completed', 'Cancelled', 'No Show', 'Rescheduled')),
     Duration INT NOT NULL,
     Priority NVARCHAR(20) DEFAULT 'Normal' CHECK (Priority IN ('Low', 'Normal', 'High', 'Urgent')),
+    VisitType NVARCHAR(20) CHECK (VisitType IN ('New Patient',  'Follow-up', 'Consultation','Procedure','Screening','Annual Checkup','Emergency')),
     ReminderSent BIT DEFAULT 0,
     Complaint NVARCHAR(500) NULL,   
     CreatedAt DATETIME2 DEFAULT GETDATE(),
@@ -169,18 +170,67 @@ CREATE TABLE Scheduling.Appointments (
     CONSTRAINT FK_Appointments_CreatedBy FOREIGN KEY (CreatedBy) REFERENCES Core_system.Users(UserID)
 );
 
+
 -- =============================================
 -- CLINICAL DATA MANAGEMENT
 -- =============================================
+
+
+USE HIS_V1
+
+CREATE TABLE Clinical_Management.PatientQueue(
+
+    QueueID INT IDENTITY(1,1) PRIMARY KEY,
+    PatientId INT NOT NULL ,
+    DoctorId INT NOT NULL , 
+    AppointmentId INT NULL ,
+    DepartmentID INT NOT NULL,
+    QueueNumber NVARCHAR(20) NOT NULL UNIQUE,
+    QueueDate DATE NOT NULL DEFAULT CAST(GETDATE() AS DATE),
+    Status NVARCHAR(30) DEFAULT 'Waiting' CHECK (Status in ( 'Waiting' , 'Called','Inprogress','Canceled','NoShow')),
+    ArrivalMethod NVARCHAR(20) NOT NULL CHECK (ArrivalMethod IN ('Walk-in','Appointment','Emergency')),
+    Priority NVARCHAR(20) DEFAULT 'Normal' CHECK (Priority IN ('Low', 'Normal', 'High', 'Urgent')),
+    SequenceNumber INT NOT NULL,
+    CurrentPosition INT,
+    CheckInTime DateTime DEFAULT GETDATE(),
+    WatingTime INT,
+    CalledTime DATETIME,
+    ConsultationStartTime DateTime,
+    ConsultationEndTime DateTime,
+    CheckInBy INT,
+    CreatedAt DATETIME2 DEFAULT GETDATE(),
+    CreatedBy INT NOT NULL,
+
+       CONSTRAINT CK_Queue_Times CHECK (
+        (CalledTime IS NULL OR CalledTime >= CheckInTime) AND
+        (ConsultationStartTime IS NULL OR ConsultationStartTime >= CheckInTime) AND
+        (ConsultationEndTime IS NULL OR ConsultationEndTime >= ConsultationStartTime)
+    ),
+    CONSTRAINT UQ_Queue_Patient_Doctor_Date UNIQUE (PatientID, DoctorID, QueueDate),
+    CONSTRAINT FK_Queue_CheckInBy FOREIGN KEY (CheckInBy) REFERENCES Core_system.Staff(StaffID),
+    CONSTRAINT FK_QueueCreatedBy FOREIGN KEY (CreatedBy) REFERENCES Core_system.Users(UserID),
+    CONSTRAINT FK_Queue_Patient FOREIGN KEY (PatientId) REFERENCES Patient_Management.Patient(PatientId),
+    CONSTRAINT FK_Queue_Provider FOREIGN KEY (DoctorId) REFERENCES Core_system.Staff(StaffId),
+    CONSTRAINT FK_Queue_Appointment FOREIGN KEY (AppointmentId) REFERENCES Scheduling.Appointments(AppointmentId),
+)
+
+
+
+
+
+
+
+
 
 CREATE TABLE Clinical_Management.Encounters (
     EncounterId INT IDENTITY(1,1) PRIMARY KEY,
     EncounterNumber NVARCHAR(20) UNIQUE NOT NULL,
     PatientId INT NOT NULL,
     PhysicianID INT NOT NULL, 
-    AppointmentId INT, 
+    
     EncounterDate DATETIME2 NOT NULL,
     EncounterType NVARCHAR(50) NOT NULL CHECK (EncounterType IN ('Outpatient', 'Inpatient', 'Emergency', 'Day Surgery', 'Telemedicine')),
+    VisitType NVARCHAR(20) CHECK (VisitType IN ('New Patient',  'Follow-up', 'Consultation','Procedure','Screening','Annual Checkup','Emergency'));
     ReviewOfSystems NVARCHAR(MAX),
     StartDateTime DATETIME NOT NULL,
     EndDateTime DATETIME NOT NULL,
@@ -190,10 +240,12 @@ CREATE TABLE Clinical_Management.Encounters (
     CreatedBy INT,
     CONSTRAINT FK_Encounters_Patient FOREIGN KEY (PatientId) REFERENCES Patient_Management.Patient(PatientId),
     CONSTRAINT FK_Encounters_Provider FOREIGN KEY (PhysicianID) REFERENCES Core_system.Staff(StaffId),
-    CONSTRAINT FK_Encounters_Appointment FOREIGN KEY (AppointmentId) REFERENCES Scheduling.Appointments(AppointmentId),
     CONSTRAINT FK_Encounters_CreatedBy FOREIGN KEY (CreatedBy) REFERENCES Core_system.Users(UserId),
     CONSTRAINT CK_Check_Start_End_date CHECK (EndDateTime > StartDateTime)
+
 );
+
+
 
 
 CREATE TABLE Clinical_Management.VitalSigns (
