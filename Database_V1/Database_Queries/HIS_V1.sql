@@ -227,7 +227,7 @@ CREATE TABLE Clinical_Management.Encounters (
     EncounterNumber NVARCHAR(20) UNIQUE NOT NULL,
     PatientId INT NOT NULL,
     PhysicianID INT NOT NULL, 
-    
+    QueueId INT,
     EncounterDate DATETIME2 NOT NULL,
     EncounterType NVARCHAR(50) NOT NULL CHECK (EncounterType IN ('Outpatient', 'Inpatient', 'Emergency', 'Day Surgery', 'Telemedicine')),
     VisitType NVARCHAR(20) CHECK (VisitType IN ('New Patient',  'Follow-up', 'Consultation','Procedure','Screening','Annual Checkup','Emergency'));
@@ -241,6 +241,8 @@ CREATE TABLE Clinical_Management.Encounters (
     CONSTRAINT FK_Encounters_Patient FOREIGN KEY (PatientId) REFERENCES Patient_Management.Patient(PatientId),
     CONSTRAINT FK_Encounters_Provider FOREIGN KEY (PhysicianID) REFERENCES Core_system.Staff(StaffId),
     CONSTRAINT FK_Encounters_CreatedBy FOREIGN KEY (CreatedBy) REFERENCES Core_system.Users(UserId),
+    ALTER TABLE Clinical_Management.EncountersADD CONSTRAINT FK_Queue_Encounters FOREIGN KEY (QueueId)REFERENCES Clinical_Management.PatientQueue(QueueID),
+
     CONSTRAINT CK_Check_Start_End_date CHECK (EndDateTime > StartDateTime)
 
 );

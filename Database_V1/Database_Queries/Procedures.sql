@@ -1,4 +1,4 @@
-/*
+﻿/*
 
 50000-50999: Validation Errors
 51000-51999: Business Logic Errors  
@@ -1821,29 +1821,24 @@ Create PROCEDURE Delete_DoctorSchedule @SheduleID int , @DoctorId int = NULL
 GO
 
 
-GO 
-CREATE PROCEDURE GetByID_ScheduleDoctor @DoctorId INT=NULL ,@ScheduleID INT=NULL
+
+CREATE OR ALTER PROCEDURE GetByID_ScheduleDoctor @DoctorId INT=NULL ,@ScheduleID INT=NULL
 AS BEGIN
+    IF (@DoctorId IS NULL AND @ScheduleID IS NULL) OR (@DoctorId IS NOT NULL AND @ScheduleID IS NOT NULL)   
+        THROW 50001, 'Provide either Doctor ID OR Schedule ID (not both)', 1;
     
-        IF (@DoctorId IS NULL AND @ScheduleID IS NULL) or (@DoctorId IS NOT NULL AND @ScheduleID IS NOT NULL)   
-            THROW 50001, 'Doctor ID and schedule Id  one of them is requrired required', 1;
-          
-        IF @ScheduleID IS NOT NULL AND  NOT EXISTS (SELECT 1 FROM Scheduling.DoctorsSchedules WHERE ScheduleID = @ScheduleID)
-            THROW 50002, 'Schedule not found', 1;
-        
-        IF @DoctorID IS NOT NULL AND NOT EXISTS (
-            SELECT 1 
-            FROM Core_system.Staff s 
-            JOIN Core_system.Users us ON s.UserID = us.UserID 
-            JOIN Core_system.Roles r ON r.RoleID = us.RoleID  
-            WHERE s.StaffID = @DoctorID  
-            AND r.RoleName IN ('Doctor', 'Physician', 'Surgeon', 'Resident') 
-            AND s.IsActive = 1
-        )
-        SELECT DS.ScheduleID,DS.DoctorID,DS.DayOfTheWeek,DS.StartTime,
-        DS.EndTime,DS.EffectiveStart,DS.EffectiveEnd,DS.IsAvalibale,DS.IsRecurring,DS.MaxAppointments 
-        FROM Scheduling.DoctorsSchedules DS WHERE DoctorID = @DoctorId OR ScheduleID = @ScheduleID 
-        
+
+    IF @DoctorID IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM Core_system.Staff WHERE StaffID = @DoctorID AND IsActive = 1
+    )
+        THROW 50002, 'Doctor not found', 1;
+    
+    SELECT DS.ScheduleID, DS.DoctorID, DS.DayOfTheWeek, DS.StartTime,
+           DS.EndTime, DS.EffectiveStart, DS.EffectiveEnd, DS.IsAvalibale, 
+           DS.IsRecurring, DS.MaxAppointments 
+    FROM Scheduling.DoctorsSchedules DS 
+    WHERE (@DoctorID IS NOT NULL AND DS.DoctorID = @DoctorID)
+       OR (@ScheduleID IS NOT NULL AND DS.ScheduleID = @ScheduleID);
 END
 GO
 
@@ -2072,115 +2067,1042 @@ CREATE PROCEDURE Update_Appointment @AppintmentID int,
     END
 GO
 
+
+--Delete_Appointment
+CREATE OR ALTER PROCEDURE Delete_Appointment 
+    @AppointmentID INT,
+    @CancelledBy INT,
+    @CancellationReason NVARCHAR(500) = NULL
+AS 
+BEGIN 
+    SET NOCOUNT ON;
+    BEGIN TRY 
+        BEGIN TRANSACTION;
+        
+        DECLARE @CurrentStatus NVARCHAR(20);
+        DECLARE @AppointmentDateTime DATETIME;
+        DECLARE @PatientID INT;
+
+       
+        SELECT 
+            @CurrentStatus = Status,
+            @AppointmentDateTime = AppointmentDateTime,
+            @PatientID = PatientID
+        FROM Scheduling.Appointments 
+        WHERE AppointmentID = @AppointmentID;
+
+       
+        IF @CurrentStatus IS NULL
+            THROW 50001, 'Appointment not found', 1;
+
+    
+        IF @CurrentStatus IN ('In Progress', 'Completed')
+            THROW 50002, 'Cannot delete appointment that is in progress or completed', 1;
+
+    
+        IF DATEDIFF(HOUR, GETDATE(), @AppointmentDateTime) < 2
+            THROW 50003, 'Cannot delete appointment within 2 hours of scheduled time', 1;
+
+       
+        IF EXISTS (
+            SELECT 1 
+            FROM Clinical_Management.PatientQueue 
+            WHERE AppointmentID = @AppointmentID 
+            AND Status IN ('Waiting', 'Called', 'InProgress')
+        )
+            THROW 50004, 'Cannot delete appointment with active queue entry', 1;
+
+    
+        UPDATE Scheduling.Appointments
+        SET 
+            Status = 'Cancelled',
+            Complaint = ISNULL(@CancellationReason, 'Appointment cancelled by user')
+        WHERE AppointmentID = @AppointmentID;
+
+       
+        UPDATE Clinical_Management.PatientQueue
+        SET Status = 'Cancelled'
+        WHERE AppointmentID = @AppointmentID 
+          AND Status IN ('Waiting', 'Called');
+
+        COMMIT TRANSACTION;
+
+        SELECT 
+            @AppointmentID AS AppointmentID,
+            'Appointment cancelled successfully' AS Message;
+
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @ErrorMessage NVARCHAR(4000) = 'Delete appointment error: ' + ERROR_MESSAGE();
+        THROW 50000, @ErrorMessage, 1;
+    END CATCH
+END;
 GO
 
---- will continou later 
+
+
+--Reschedule_Appointment
+GO
+CREATE OR ALTER PROCEDURE Reschedule_Appointment 
+    @AppointmentID INT,
+    @NewAppointmentDateTime DATETIME,
+    @RescheduledBy INT,
+    @Reason NVARCHAR(500) = NULL
+AS 
+BEGIN 
+    SET NOCOUNT ON;
+    BEGIN TRY 
+        BEGIN TRANSACTION;
+        
+        DECLARE @CurrentStatus NVARCHAR(20);
+        DECLARE @CurrentDateTime DATETIME;
+        DECLARE @PatientID INT;
+        DECLARE @PhysicianID INT;
+        DECLARE @DepartmentID INT;
+        DECLARE @Duration INT;
+        DECLARE @Priority NVARCHAR(30);
+        DECLARE @Complaint NVARCHAR(500);
+
+    
+        SELECT 
+            @CurrentStatus = Status,
+            @CurrentDateTime = AppointmentDateTime,
+            @PatientID = PatientID,
+            @PhysicianID = PhysicianID,
+            @DepartmentID = DepartmentID,
+            @Duration = Duration,
+            @Priority = Priority,
+            @Complaint = Complaint
+        FROM Scheduling.Appointments 
+        WHERE AppointmentID = @AppointmentID;
+
+        -- Validation
+        IF @CurrentStatus IS NULL
+            THROW 50001, 'Appointment not found', 1;
+
+        
+        IF @CurrentStatus IN ('In Progress', 'Completed', 'No Show')
+            THROW 50002, 'Cannot reschedule appointment that is in progress, completed, or no show', 1;
+
+                IF @NewAppointmentDateTime <= GETDATE()
+            THROW 50003, 'New appointment date must be in the future', 1;
+
+       
+        IF NOT EXISTS (
+            SELECT 1 
+            FROM Scheduling.DoctorsSchedules ds
+            WHERE ds.DoctorID = @PhysicianID
+            AND ds.IsAvalibale = 1
+            AND (
+                (ds.SpecificDate = CAST(@NewAppointmentDateTime AS DATE) AND ds.IsRecurring = 0)
+                OR
+                (ds.DayOfTheWeek = DATEPART(WEEKDAY, @NewAppointmentDateTime) AND ds.IsRecurring = 1
+                 AND CAST(@NewAppointmentDateTime AS DATE) BETWEEN ds.EffectiveStart AND ISNULL(ds.EffectiveEnd, '9999-12-31'))
+            )
+            AND CAST(@NewAppointmentDateTime AS TIME) >= ds.StartTime
+            AND CAST(@NewAppointmentDateTime AS TIME) < ds.EndTime
+        )
+            THROW 50004, 'Physician is not available at the requested time', 1;
+
+       
+        IF EXISTS (
+            SELECT 1 
+            FROM Scheduling.Appointments 
+            WHERE PhysicianID = @PhysicianID 
+            AND AppointmentDateTime = @NewAppointmentDateTime    
+            AND Status IN ('Scheduled', 'Confirmed')
+            AND AppointmentID != @AppointmentID  
+        )
+            THROW 50005, 'Doctor has another appointment at this time', 1;
+
+      
+        IF EXISTS (
+            SELECT 1 
+            FROM Scheduling.Appointments 
+            WHERE PatientID = @PatientID 
+            AND AppointmentDateTime = @NewAppointmentDateTime    
+            AND Status IN ('Scheduled', 'Confirmed')
+            AND AppointmentID != @AppointmentID 
+        )
+            THROW 50006, 'Patient has another appointment at this time', 1;
+
+        
+        UPDATE Scheduling.Appointments
+        SET 
+            AppointmentDateTime = @NewAppointmentDateTime,
+            Status = 'Rescheduled',
+            Complaint = ISNULL(@Reason, Complaint) + ' (Rescheduled from ' + CONVERT(VARCHAR, @CurrentDateTime, 120) + ')'
+        WHERE AppointmentID = @AppointmentID;
+
+     
+        UPDATE Clinical_Management.PatientQueue
+        SET 
+            QueueDate = CAST(@NewAppointmentDateTime AS DATE),
+            Status = 'Waiting' 
+        WHERE AppointmentID = @AppointmentID 
+          AND Status IN ('Waiting', 'Called');
+
+        COMMIT TRANSACTION;
+
+        SELECT 
+            @AppointmentID AS AppointmentID,
+            @NewAppointmentDateTime AS NewAppointmentDateTime,
+            'Appointment rescheduled successfully' AS Message;
+
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @ErrorMessage NVARCHAR(4000) = 'Reschedule appointment error: ' + ERROR_MESSAGE();
+        THROW 50000, @ErrorMessage, 1;
+    END CATCH
+END;
+GO
+
+--Get_Appointment_Details
+CREATE OR ALTER PROCEDURE Get_Appointment_Details
+    @AppointmentID INT = NULL,
+    @PatientID INT = NULL,
+    @PhysicianID INT = NULL,
+    @StartDate DATE = NULL,
+    @EndDate DATE = NULL
+AS 
+BEGIN 
+    SET NOCOUNT ON;
+
+
+    IF @StartDate IS NULL
+        SET @StartDate = CAST(GETDATE() AS DATE);
+    IF @EndDate IS NULL
+        SET @EndDate = DATEADD(DAY, 30, @StartDate);
+
+    SELECT 
+        a.AppointmentID,
+        a.PatientID,
+        p.FirstName + ' ' + p.LastName AS PatientName,
+        a.PhysicianID,
+        s.FirstName + ' ' + s.LastName AS PhysicianName,
+        d.DepartmentName,
+        a.AppointmentDateTime,
+        a.Status,
+        a.Duration,
+        a.Priority,
+        a.Complaint,
+        a.CreatedAt,
+        CASE 
+            WHEN a.AppointmentDateTime < GETDATE() AND a.Status IN ('Scheduled', 'Confirmed') THEN 'Missed'
+            WHEN a.AppointmentDateTime > GETDATE() THEN 'Upcoming'
+            ELSE 'Today'
+        END AS AppointmentTiming,
+      
+        EXISTS (
+            SELECT 1 
+            FROM Clinical_Management.PatientQueue pq 
+            WHERE pq.AppointmentID = a.AppointmentID 
+            AND pq.QueueDate = CAST(a.AppointmentDateTime AS DATE)
+        ) AS HasCheckedIn
+    FROM Scheduling.Appointments a
+    INNER JOIN Patient_Management.Patient p ON a.PatientID = p.PatientID
+    INNER JOIN Core_system.Staff s ON a.PhysicianID = s.StaffID
+    INNER JOIN Clinical_Management.Departments d ON a.DepartmentID = d.DepartmentID
+    WHERE (@AppointmentID IS NULL OR a.AppointmentID = @AppointmentID)
+      AND (@PatientID IS NULL OR a.PatientID = @PatientID)
+      AND (@PhysicianID IS NULL OR a.PhysicianID = @PhysicianID)
+      AND CAST(a.AppointmentDateTime AS DATE) BETWEEN @StartDate AND @EndDate
+    ORDER BY a.AppointmentDateTime ASC;
+END;
+GO
+
+-- =============================================
+-- Patient Queue PROCEDURES
+-- =============================================
+CREATE PROCEDURE CheckInPatientToQueue
+    @PatientID INT,
+    @DoctorID INT,
+    @DepartmentID INT,
+    @AppointmentID INT = NULL,
+    @Priority NVARCHAR(20) = 'Normal',
+    @ArrivalMethod NVARCHAR(20) = 'Walk-in',
+    @ChiefComplaint NVARCHAR(500) = NULL,
+    @CheckInCounter NVARCHAR(20) = NULL,
+    @CheckInByStaffID INT, 
+    @QueueID INT OUTPUT,
+    @QueueNumber NVARCHAR(20) OUTPUT,
+    @CurrentPosition INT OUTPUT
+AS 
+BEGIN
+    DECLARE @QueueDate DATE = CAST(GETDATE() AS DATE);
+    DECLARE @QueuePrefix NVARCHAR(5);
+    DECLARE @NextSequence INT;
+    DECLARE @EstimatedWait INT;
+    DECLARE @MaxPatients INT;
+    DECLARE @CurrentCount INT;
+    DECLARE @AvgConsultTime INT;
+    DECLARE @PatientsAhead INT;
+
+    SET NOCOUNT ON;
+    
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        
+        IF @PatientID IS NULL OR @DoctorID IS NULL OR @DepartmentID IS NULL
+            THROW 50001, 'PatientID, DoctorID, and DepartmentID are required', 1;
+        
+        IF @CheckInByStaffID IS NULL
+            THROW 50001, 'CheckInByStaffID and CreatedByUserID are required', 1;
+    
+       
+        IF NOT EXISTS (SELECT 1 FROM Patient_Management.Patient WHERE PatientId = @PatientID)
+            THROW 50002, 'Patient not found or inactive', 1;
+            
+        
+        IF NOT EXISTS (
+            SELECT 1 
+            FROM Core_system.Staff s 
+            INNER JOIN Core_system.Users u ON s.UserID = u.UserID
+            WHERE s.StaffID = @DoctorID  
+            AND s.IsActive = 1
+            AND u.RoleID IN (SELECT RoleID FROM Core_system.Roles WHERE RoleName IN ('Doctor', 'Physician', 'Surgeon', 'Resident'))
+        )
+            THROW 50003, 'Doctor not found or not an active medical staff', 1;
+     
+        
+        IF NOT EXISTS (SELECT 1 FROM Core_system.Departments WHERE DepartmentID = @DepartmentID)
+            THROW 50004, 'Department not found', 1;
+
+        -- Check if patient is already in queue
+        IF EXISTS (
+            SELECT 1 
+            FROM Clinical_Management.PatientQueue
+            WHERE PatientID = @PatientID
+              AND QueueDate = @QueueDate
+              AND Status IN ('Waiting', 'Called', 'InProgress')
+        )
+            THROW 50007, 'Patient is already in queue today', 1;
+
+     
+        --SELECT 
+        --    @QueuePrefix = QueuePrefix,
+        --    @MaxPatients = MaxPatientsPerDay,
+        --    @AvgConsultTime = AverageConsultationTime
+        --FROM Clinical_Management.QueueConfiguration
+        --WHERE DepartmentID = @DepartmentID 
+        --  AND IsActive = 1;
+        
+        -- Set default queue prefix if not configured
+        IF @QueuePrefix IS NULL
+        BEGIN
+            SELECT @QueuePrefix = UPPER(LEFT(st.FullName, 1))
+            FROM Core_system.Staff st
+            WHERE StaffID = @DoctorID;
+            
+            SET @AvgConsultTime = 15; 
+        END
+        
+        
+        IF @MaxPatients IS NOT NULL
+        BEGIN
+            SELECT @CurrentCount = COUNT(*)
+            FROM Clinical_Management.PatientQueue
+            WHERE DoctorID = @DoctorID
+              AND QueueDate = @QueueDate
+              AND Status NOT IN ('Cancelled', 'NoShow', 'Completed');
+            
+            IF @CurrentCount >= @MaxPatients
+                THROW 50008, 'Doctor has reached maximum patient capacity for today', 1;
+        END
+
+        
+        SELECT @NextSequence = ISNULL(MAX(SequenceNumber), 0) + 1
+        FROM Clinical_Management.PatientQueue
+        WHERE DoctorID = @DoctorID
+          AND QueueDate = @QueueDate;
+
+      
+        SELECT @PatientsAhead = COUNT(*)
+        FROM Clinical_Management.PatientQueue
+        WHERE DoctorID = @DoctorID
+          AND QueueDate = @QueueDate
+          AND Status = 'Waiting'
+          AND SequenceNumber < @NextSequence;
+
+        SET @CurrentPosition = @PatientsAhead + 1;
+
+       
+        SET @QueueNumber = @QueuePrefix + FORMAT(@NextSequence, '000') + '-' + FORMAT(CAST(RIGHT(CAST(NEWID() AS NVARCHAR(36)), 3) AS INT), '000');
+
+
+        SET @EstimatedWait = @PatientsAhead * ISNULL(@AvgConsultTime, 20);
+        
+       
+        INSERT INTO Clinical_Management.PatientQueue (
+            PatientID, 
+            DoctorID,
+            AppointmentID, 
+            DepartmentID,
+            QueueNumber, 
+            QueueDate, 
+            Status, 
+            ArrivalMethod,
+            Priority,
+            SequenceNumber,
+            CurrentPosition, 
+            WatingTime,
+            CheckInBy,
+            CheckInTime
+        )
+        VALUES (
+            @PatientID, 
+            @DoctorID,
+            @AppointmentID, 
+            @DepartmentID,
+            @QueueNumber, 
+            @QueueDate, 
+            'Waiting', 
+            @ArrivalMethod,
+            @Priority,
+            @NextSequence,
+            @CurrentPosition, 
+            @EstimatedWait,
+            @CheckInCounter,
+            GETDATE()
+        );
+
+        -- Set output parameters
+        SET @QueueID = SCOPE_IDENTITY();
+        SET @CurrentPosition = @PatientsAhead + 1;
+
+        COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @ErrorMessage NVARCHAR(4000) = 'Patient Checkin error: ' + ERROR_MESSAGE();
+        DECLARE @ErrorSeverity INT = ERROR_SEVERITY();
+        DECLARE @ErrorState INT = ERROR_STATE();
+        
+        RAISERROR(@ErrorMessage, @ErrorSeverity, @ErrorState);
+    END CATCH
+END;
+
+GO
+
+
+
+CREATE OR ALTER PROCEDURE UpdateQueuePositions
+    @DoctorID INT,
+    @QueueDate DATE = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    IF @QueueDate IS NULL
+        SET @QueueDate = CAST(GETDATE() AS DATE);
+    
+    -- Reset positions for non-waiting patients
+    UPDATE Clinical_Management.PatientQueue
+    SET CurrentPosition = NULL
+    WHERE DoctorID = @DoctorID
+      AND QueueDate = @QueueDate
+      AND Status IN ('Called', 'InProgress', 'Completed', 'Cancelled', 'NoShow', 'Transferred');
+    
+    -- Recalculate positions for waiting patients (ONLY by check-in time - FCFS)
+    WITH RankedQueue AS (
+        SELECT 
+            QueueID,
+            ROW_NUMBER() OVER (
+                ORDER BY CheckInTime ASC  
+            ) AS NewPosition
+        FROM Clinical_Management.PatientQueue
+        WHERE DoctorID = @DoctorID
+          AND QueueDate = @QueueDate
+          AND Status = 'Waiting'
+    )
+    UPDATE pq
+    SET CurrentPosition = rq.NewPosition
+    FROM Clinical_Management.PatientQueue pq
+    INNER JOIN RankedQueue rq ON pq.QueueID = rq.QueueID;
+    
+   
+    SELECT 
+        QueueID,
+        QueueNumber,
+        CurrentPosition,
+        Priority,
+        Status,
+        CheckInTime,
+        DATEDIFF(MINUTE, CheckInTime, GETDATE()) AS WaitingMinutes
+    FROM Clinical_Management.PatientQueue
+    WHERE DoctorID = @DoctorID
+      AND QueueDate = @QueueDate
+    ORDER BY 
+        CASE Status
+            WHEN 'InProgress' THEN 1
+            WHEN 'Called' THEN 2
+            WHEN 'Waiting' THEN 3
+            ELSE 4
+        END,
+        CheckInTime ASC;  
+END;
+GO
+GO
+
+
+-- PROCEDURE 3: Call Next Patient
+
+CREATE OR ALTER PROCEDURE CallNextPatientQueue
+    @DoctorID INT,
+    @CalledByStaffID INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    BEGIN TRY
+        BEGIN TRANSACTION;
+        
+         DECLARE @QueueDate DATE = CAST(GETDATE() AS DATE);
+        DECLARE @QueueID INT;
+        DECLARE @QueueNumber NVARCHAR(20);
+        DECLARE @PatientName NVARCHAR(100);
+        DECLARE @PatientID INT;
+
+
+        IF @DoctorID IS NULL OR @CalledByStaffID IS NULL
+            THROW 50001, 'DoctorID and CalledByStaffID are required', 1;
+        
+
+        SELECT TOP 1 
+            @QueueID = QueueID,
+            @QueueNumber = QueueNumber,
+            @PatientID = PatientId
+        FROM Clinical_Management.PatientQueue
+        WHERE DoctorID = @DoctorID
+          AND QueueDate = @QueueDate
+          AND Status = 'Waiting'
+        ORDER BY 
+            CheckInTime ASC;
+        
+
+        IF @QueueID IS NULL
+        BEGIN
+            SELECT 
+                0 AS QueueID, 
+                NULL AS QueueNumber, 
+                'No patients in queue' AS Message,
+                0 AS PatientsWaiting;
+            
+            COMMIT TRANSACTION;
+            RETURN;
+        END
+
+        SELECT @PatientName = FirstName + ' ' + LastName
+        FROM Patient_Management.Patient
+        WHERE PatientId = @PatientID;
+
+        UPDATE Clinical_Management.PatientQueue
+        SET Status = 'Called',
+            CalledTime = GETDATE()
+        WHERE QueueID = @QueueID;
+        
+
+        
+     
+        EXEC UpdateQueuePositions @DoctorID, @QueueDate;
+        
+        COMMIT TRANSACTION;
+
+
+          SELECT 
+            @QueueID AS QueueID,
+            @QueueNumber AS QueueNumber,
+            @PatientID AS PatientID,
+            @PatientName AS PatientName,
+            'Patient called successfully' AS Message,
+            (SELECT COUNT(*) 
+             FROM Clinical_Management.PatientQueue 
+             WHERE DoctorID = @DoctorID 
+               AND QueueDate = @QueueDate 
+               AND Status = 'Waiting') AS PatientsRemaining;
+
+        
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        THROW;
+    END CATCH
+END;
+GO
+
+
+-- Get DoctorQueue 
+
+CREATE OR ALTER PROCEDURE GetDoctorQueue 
+    @DoctorId INT,
+    @GetDate DATE = NULL
+AS 
+BEGIN 
+    SET NOCOUNT ON;
+    
+    BEGIN TRY
+        IF @GetDate IS NULL
+            SET @GetDate = CAST(GETDATE() AS DATE);
+        
+
+        IF NOT EXISTS (SELECT 1 FROM Core_system.Staff WHERE StaffID = @DoctorId AND IsActive = 1)
+        BEGIN
+            SELECT 'Doctor not found or inactive' AS Message;
+            RETURN;
+        END
+
+        SELECT   
+            pq.QueueID,
+            pq.QueueNumber,
+            pq.PatientID,
+            p.FirstName + ' ' + p.LastName AS PatientName,
+            pq.CurrentPosition,
+            pq.Priority,
+            pq.Status,
+            pq.CheckInTime,
+            pq.CalledTime,
+            pq.ConsultationStartTime,
+            DATEDIFF(MINUTE, pq.CheckInTime, GETDATE()) AS WaitingMinutes,
+            pq.WatingTime,
+            pq.ArrivalMethod
+        FROM Clinical_Management.PatientQueue pq
+        INNER JOIN Patient_Management.Patient p ON pq.PatientID = p.PatientId
+        WHERE pq.DoctorId = @DoctorId 
+          AND pq.QueueDate = @GetDate 
+        ORDER BY 
+            CASE pq.Status
+                WHEN 'InProgress' THEN 1
+                WHEN 'Called' THEN 2
+                WHEN 'Waiting' THEN 3
+                ELSE 4
+            END,
+            pq.CheckInTime ASC;
+
+    END TRY
+    BEGIN CATCH
+        DECLARE @ErrorMessage NVARCHAR(4000) = 'Error retrieving doctor queue: ' + ERROR_MESSAGE();
+        THROW 50000, @ErrorMessage, 1;
+    END CATCH
+END;
+GO
+
+CREATE OR ALTER PROCEDURE CancelQueueEntry
+    @QueueID INT,
+    @StaffID INT,
+    @Reason NVARCHAR(200) = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        DECLARE @DoctorID INT, @QueueDate DATE, @AppointmentID INT;
+
+        -- Get queue details
+        SELECT 
+            @DoctorID = DoctorID,
+            @QueueDate = QueueDate,
+            @AppointmentID = AppointmentID
+        FROM Clinical_Management.PatientQueue
+        WHERE QueueID = @QueueID;
+
+        IF @DoctorID IS NULL
+            THROW 50001, 'Queue entry not found', 1;
+
+        -- Update queue status
+        UPDATE Clinical_Management.PatientQueue
+        SET Status = 'Cancelled'
+        WHERE QueueID = @QueueID;
+
+        -- Update appointment if exists
+        IF @AppointmentID IS NOT NULL
+        BEGIN
+            UPDATE Scheduling.Appointments
+            SET Status = 'Cancelled'
+            WHERE AppointmentId = @AppointmentID;
+        END
+
+        -- Update positions
+        EXEC UpdateQueuePositions @DoctorID, @QueueDate;
+
+        COMMIT TRANSACTION;
+
+        SELECT 'Queue entry cancelled successfully' AS Message;
+
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END;
+GO
+CREATE OR ALTER PROCEDURE MarkPatientNoShow
+    @QueueID INT,
+    @StaffID INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        DECLARE @DoctorID INT, @QueueDate DATE, @AppointmentID INT;
+
+        SELECT 
+            @DoctorID = DoctorID,
+            @QueueDate = QueueDate,
+            @AppointmentID = AppointmentID
+        FROM Clinical_Management.PatientQueue
+        WHERE QueueID = @QueueID;
+
+        IF @DoctorID IS NULL
+            THROW 50001, 'Queue entry not found', 1;
+
+        -- Update queue status
+        UPDATE Clinical_Management.PatientQueue
+        SET Status = 'NoShow'
+        WHERE QueueID = @QueueID;
+
+        -- Update appointment if exists
+        IF @AppointmentID IS NOT NULL
+        BEGIN
+            UPDATE Scheduling.Appointments
+            SET Status = 'No Show'
+            WHERE AppointmentId = @AppointmentID;
+        END
+
+        -- Update positions
+        EXEC UpdateQueuePositions @DoctorID, @QueueDate;
+
+        COMMIT TRANSACTION;
+
+        SELECT 'Patient marked as No Show' AS Message;
+
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        THROW;
+    END CATCH
+END;
+GO
 
 
 
 -- =============================================
 -- Encounter PROCEDURES
 -- =============================================
+--Start Consulation
+
+CREATE OR ALTER PROCEDURE StartConsultation
+    @QueueID INT,
+    @StaffID INT,
+    @ChiefComplaint NVARCHAR(500) = NULL,
+    @EstimatedDuration INT = 30,
+    @EncounterID INT OUTPUT,
+    @VisitType NVARCHAR(20) = NULL 
+AS 
+BEGIN
+    SET NOCOUNT ON;
+    BEGIN TRY
+        BEGIN TRANSACTION;
+        
+        -- Variables
+        DECLARE @PatientID INT;
+        DECLARE @DoctorID INT;
+        DECLARE @AppointmentID INT;
+        DECLARE @DepartmentID INT;
+        DECLARE @EncounterNumber NVARCHAR(20);
+        DECLARE @QueueDate DATE;
+        DECLARE @StartTime DATETIME2 = GETDATE();
+        DECLARE @EndTime DATETIME2;
+        
+        
+        -- VALIDATION
+        IF @QueueID IS NULL OR @StaffID IS NULL
+            THROW 50001, 'QueueID and StaffID are required', 1;
+        
+        -- Check if queue entry exists and is in valid status
+        IF NOT EXISTS (
+            SELECT 1 
+            FROM Clinical_Management.PatientQueue 
+            WHERE QueueID = @QueueID 
+            AND Status IN ('Waiting', 'Called')
+        )
+            THROW 50002, 'Queue entry not found or not in valid status for consultation', 1;
+        
+        -- Check if doctor already has a patient in consultation
+        IF EXISTS (
+            SELECT 1 
+            FROM Clinical_Management.PatientQueue 
+            WHERE DoctorID = (SELECT DoctorID FROM Clinical_Management.PatientQueue WHERE QueueID = @QueueID)
+            AND Status = 'InProgress'
+            AND QueueID != @QueueID
+        )
+            THROW 50003, 'Doctor already has a patient in consultation', 1;
+        
+        -- GET QUEUE DETAILS
+        SELECT 
+            @PatientID = PatientID,
+            @DoctorID = DoctorID,
+            @AppointmentID = AppointmentID,
+            @DepartmentID = DepartmentID,
+            @QueueDate = QueueDate
+        FROM Clinical_Management.PatientQueue
+        WHERE QueueID = @QueueID;
+        
+        -- GET VISIT TYPE (from appointment or default)
+        IF @AppointmentID IS NOT NULL
+        BEGIN
+            SELECT @VisitType = VisitType
+            FROM Scheduling.Appointments
+            WHERE AppointmentId = @AppointmentID;
+        END
+        
+        IF @VisitType IS NULL
+            SET @VisitType = 'Follow-up';
+        
+  
+        IF @ChiefComplaint IS NULL AND @AppointmentID IS NOT NULL
+        BEGIN
+            SELECT @ChiefComplaint = Complaint
+            FROM Scheduling.Appointments
+            WHERE AppointmentId = @AppointmentID;
+        END
+        
+      
+        -- CALCULATE END TIME
+      
+        SET @EndTime = DATEADD(MINUTE, @EstimatedDuration, @StartTime);
+        
+      
+        -- GENERATE ENCOUNTER NUMBER
+      
+        DECLARE @DatePart NVARCHAR(8) = FORMAT(GETDATE(), 'yyyyMMdd');
+        DECLARE @SequencePart INT;
+        
+        SELECT @SequencePart = ISNULL(MAX(
+            CAST(RIGHT(EncounterNumber, 5) AS INT)
+        ), 0) + 1
+        FROM Clinical_Management.Encounters
+        WHERE EncounterNumber LIKE 'ENC' + @DatePart + '%';
+        
+        SET @EncounterNumber = 'ENC' + @DatePart + RIGHT('00000' + CAST(@SequencePart AS VARCHAR), 5);
+     
+        -- CREATE ENCOUNTER
+ 
+        INSERT INTO Clinical_Management.Encounters (
+            EncounterNumber, 
+            PatientId, 
+            PhysicianID, 
+            QueueID,
+            EncounterDate, 
+            EncounterType, 
+            VisitType,
+            ReviewOfSystems,
+            StartDateTime, 
+            EndDateTime, 
+            Status, 
+            CreatedBy,
+            CreatedAt
+        )
+        VALUES (
+            @EncounterNumber, 
+            @PatientID, 
+            @DoctorID, 
+            @QueueID,
+            @StartTime,
+            'Outpatient',
+            @VisitType,
+            @ChiefComplaint,
+            @StartTime,
+            @EndTime,
+            'Active', 
+            @StaffID,
+            @StartTime
+        );
+        
+        SET @EncounterID = SCOPE_IDENTITY();
+        
+       
+        -- UPDATE QUEUE STATUS
+      
+        UPDATE Clinical_Management.PatientQueue
+        SET Status = 'InProgress',
+            ConsultationStartTime = @StartTime
+        WHERE QueueID = @QueueID;
+        
+    
+        -- UPDATE APPOINTMENT STATUS
+      
+        IF @AppointmentID IS NOT NULL
+        BEGIN
+            UPDATE Scheduling.Appointments
+            SET Status = 'In Progress'
+            WHERE AppointmentId = @AppointmentID;
+        END
+        
+     
+        -- CREATE OPD VISIT RECORD 
+     
+        IF OBJECT_ID('Outpatient_Management.OPD_Visit') IS NOT NULL
+        BEGIN
+            INSERT INTO Outpatient_Management.OPD_Visit (
+                EncounterID, 
+                AppointmentID,
+                VisitReason, 
+                VisitStatus
+            )
+            VALUES (
+                @EncounterID, 
+                @AppointmentID,
+                @ChiefComplaint, 
+                'In Progress'
+            );
+        END
+        
+         -- UPDATE POSITIONS FOR REMAINING PATIENTS
+   
+        EXEC UpdateQueuePositions @DoctorID, @QueueDate;
+        
+        COMMIT TRANSACTION;
+        
+      
+        -- RETURN SUCCESS WITH DETAILS
+     
+        SELECT 
+            @EncounterID AS EncounterID,
+            @EncounterNumber AS EncounterNumber,
+            'Consultation started successfully' AS Message;
+        
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        THROW;
+    END CATCH
+END;
 GO
-CREATE PROCEDURE CreateEncounter
-    @EncounterNumber NVARCHAR(20),
-    @PatientId INT,
-    @DoctorId INT,
-    @AppointmentId INT = NULL,
-    @EncounterDate DATETIME2,
-    @EncounterType NVARCHAR(50),
-    @VisitType NVARCHAR(20) = NULL,
-    @ReviewOfSystems NVARCHAR(MAX) = NULL,
-    @StartDateTime DATETIME,
-    @EndDateTime DATETIME,
-    @Status NVARCHAR(20) = 'Active',
-    @FollowUpInstructions NVARCHAR(MAX) = NULL
+
+
+
+CREATE OR ALTER PROCEDURE CompleteConsultation
+    @QueueID INT,
+    @EncounterID INT,
+    @StaffID INT
 AS
 BEGIN
     SET NOCOUNT ON;
-    BEGIN TRY 
-    BEGIN TRANSACTION 
-
-    IF @PatientId IS NULL OR @DoctorId IS NULL OR @EncounterDate IS NULL OR @VisitType IS NULL OR @EncounterType IS NULL
-        THROW 50001,'Paitentid and DoctorID and Encounter Date and  Visit Type and EncounterTypr are required',1;
-
-      IF NOT EXISTS (SELECT 1 FROM Patient_Management.Patient WHERE PatientID = @PatientID AND IsActive = 1)
-            THROW 50002, 'Patient not found or inactive', 1;
-            
-        IF NOT EXISTS (
-            SELECT 1 
-            FROM Core_system.Staff s 
-            JOIN Core_system.Users us ON s.UserID = us.UserID 
-            JOIN Core_system.Roles r ON r.RoleID = us.RoleID  
-            WHERE s.StaffID = @DoctorId  
-            AND r.RoleName IN ('Doctor', 'Physician', 'Surgeon', 'Resident') 
-            AND s.IsActive = 1
-        )
-            THROW 50003, 'Physician not found or not an active doctor', 1;
-       
-         IF @EncounterDate <= GETDATE()
-            THROW 50004, 'Encounter date must be in the future', 1;
-        
-          IF @StartDateTime > @EndDateTime 
-            THROW 50005,'Time Error Start time can not be after end time',1;
-   
-        
-        Set @StartDateTime = GETDATE();
-
-    
-
-
-
-
-
-    
     BEGIN TRY
-        INSERT INTO Clinical_Management.Encounters (
-            EncounterNumber,
-            PatientId,
-            PhysicianID,
-            AppointmentId,
-            EncounterDate,
-            EncounterType,
-            VisitType,
-            ReviewOfSystems,
-            StartDateTime,
-            EndDateTime,
-            Status,
-            FollowUpInstructions
-            
-        )
-        VALUES (
-            @EncounterNumber,
-            @PatientId,
-            @DoctorId,
-            @AppointmentId,
-            @EncounterDate,
-            @EncounterType,
-            @VisitType,
-            @ReviewOfSystems,
-            @StartDateTime,
-            @EndDateTime,
-            @Status,
-            @FollowUpInstructions
+        BEGIN TRANSACTION;
         
-        )
-        COMMIT TRANSACTION; 
-        SELECT SCOPE_IDENTITY() AS EncounterId;
+        DECLARE @DoctorID INT;
+        DECLARE @QueueDate DATE;
+        DECLARE @AppointmentID INT;
+        DECLARE @CurrentQueueStatus NVARCHAR(30);
+        DECLARE @CurrentEncounterStatus NVARCHAR(20);
+        
 
+        IF @QueueID IS NULL OR @EncounterID IS NULL OR @StaffID IS NULL
+            THROW 50001, 'QueueID, EncounterID, and StaffID are required', 1;
+        
+       
+        SELECT 
+            @DoctorID = DoctorID,
+            @QueueDate = QueueDate,
+            @AppointmentID = AppointmentID,
+            @CurrentQueueStatus = Status
+        FROM Clinical_Management.PatientQueue
+        WHERE QueueID = @QueueID;
+        
+        IF @DoctorID IS NULL
+            THROW 50002, 'Queue entry not found', 1;
+            
+  
+        IF @CurrentQueueStatus != 'InProgress'
+            THROW 50003, 'Cannot complete consultation that is not in progress', 1;
+        
+
+        SELECT @CurrentEncounterStatus = Status
+        FROM Clinical_Management.Encounters
+        WHERE EncounterId = @EncounterID;
+        
+        IF @CurrentEncounterStatus IS NULL
+            THROW 50004, 'Encounter not found', 1;
+            
+        IF @CurrentEncounterStatus != 'Active'
+            THROW 50005, 'Cannot complete encounter that is not active', 1;
+        
+  
+  
+        UPDATE Clinical_Management.PatientQueue
+        SET Status = 'Completed',
+            ConsultationEndTime = GETDATE()
+        WHERE QueueID = @QueueID;
+        
+
+     
+    
+        UPDATE Clinical_Management.Encounters
+        SET Status = 'Completed',
+            EndDateTime = GETDATE()
+        WHERE EncounterId = @EncounterID;
+        
+
+
+
+    
+        BEGIN
+            UPDATE Outpatient_Management.OPD_Visit
+            SET VisitStatus = 'Completed'
+            WHERE EncounterID = @EncounterID;
+        END
+        
+  
+ 
+   
+        IF @AppointmentID IS NOT NULL
+        BEGIN
+            UPDATE Scheduling.Appointments
+            SET Status = 'Completed'
+            WHERE AppointmentId = @AppointmentID;
+        END
+        
+
+     
+
+        EXEC UpdateQueuePositions @DoctorID, @QueueDate;
+        
+        COMMIT TRANSACTION;
+        
+
+        
+
+        SELECT 
+            @QueueID AS QueueID,
+            @EncounterID AS EncounterID,
+            'Consultation completed successfully' AS Message;
+        
     END TRY
     BEGIN CATCH
-    if @@TRANCOUNT > 0 
-        Rollback Transaction;
-        Print 'Error Creating Encounter' + Error_Message();
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
         THROW;
     END CATCH
-END
-
+END;
 GO
-
-
-
 
 
 

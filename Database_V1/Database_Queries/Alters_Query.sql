@@ -110,6 +110,5 @@ ADD QueueId int
 
 go
 use HIS_V1
-ALTER TABLE Clinical_Management.Encounters
-ADD CONSTRAINT FK_Queue_Encounters (QueueId) REFERENCES Clinical_Management.PatientQueue(QueueID)
+ALTER TABLE Clinical_Management.EncountersADD CONSTRAINT FK_Queue_Encounters FOREIGN KEY (QueueId)REFERENCES Clinical_Management.PatientQueue(QueueID);
 
