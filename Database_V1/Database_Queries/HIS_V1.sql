@@ -237,6 +237,7 @@ CREATE TABLE Clinical_Management.Encounters (
     Status NVARCHAR(20) DEFAULT 'Active' CHECK (Status IN ('Active', 'Completed', 'Cancelled')),
     FollowUpInstructions NVARCHAR(MAX),
     CreatedAt DATETIME2 DEFAULT GETDATE(),
+
     CreatedBy INT,
     CONSTRAINT FK_Encounters_Patient FOREIGN KEY (PatientId) REFERENCES Patient_Management.Patient(PatientId),
     CONSTRAINT FK_Encounters_Provider FOREIGN KEY (PhysicianID) REFERENCES Core_system.Staff(StaffId),
@@ -254,7 +255,7 @@ CREATE TABLE Clinical_Management.VitalSigns (
     VitalSignId INT IDENTITY(1,1) PRIMARY KEY,
     EncounterId INT NOT NULL,
     Temperature DECIMAL(4,2),
-    BloodPressure NVARCHAR(20),  -- Changed to NVARCHAR for values like "120/80"
+    BloodPressure NVARCHAR(20),  
     HeartRate INT,
     RespiratoryRate INT, 
     OxygenSaturation DECIMAL(5,2),

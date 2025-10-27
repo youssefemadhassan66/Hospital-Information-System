@@ -66,8 +66,8 @@ As Begin
 			
 		IF   LEN(@SpeciName)< 2 OR LEN(@speciCode) < 2
 			Throw 50001 , 'Length Error Please eneter a valid Name',1;
-		IF NOT EXISTS (SELECT 1 FROM  Core_system.Specializations WHERE SpecializationID = @SpeciID)
-
+		IF NOT EXISTS (SELECT 1 FROM Core_system.Specializations WHERE SpecializationID = @SpeciID)
+            THROW 50003, 'Specialization ID not found', 1;
 		IF EXISTS (SELECT 1 FROM Core_system.Specializations WHERE SpecializationName = @SpeciName AND SpecializationID != @SpeciID)
             THROW 50002, 'DUPLICATE_ERROR: Specialization name already exists', 1;
 
@@ -217,8 +217,8 @@ As Begin
 	 IF @UserName LIKE '%[^a-zA-Z0-9_]%'
             THROW 50005, 'Username can only contain letters, numbers, and underscores', 1;
 
-	 Insert INTO Core_system.Users (UserName,BrithDate,PasswordHash,Email,RoleID)
-	 VALUES(@UserName,@BrithDate,@PasswordHash,@Email);
+	 Insert INTO Core_system.Users (UserName, BrithDate, PasswordHash, Email, RoleID)
+        VALUES(@UserName, @BrithDate, @PasswordHash, @Email, @RoleID);
 
 	End Try
 	BEGIN CATCH
@@ -478,7 +478,7 @@ SET NOCOUNT ON
 	IF EXISTS (SELECT 1 FROM Core_system.Users WHERE UserID = @USERID AND RoleID = @ROLEID)
             THROW 50004, 'User already has this role assigned', 1;
 	
-	INSERT INTO Core_system.Users (UserID, RoleID) VALUES (123, 2)
+	INSERT INTO Core_system.Users (UserID, RoleID) VALUES (@USERID, @ROLEID)
 
 END TRY
 BEGIN CATCH 
@@ -591,10 +591,10 @@ BEGIN
         
         -- Update department
         UPDATE Core_system.Departments 
-        SET DepartmentName = COALESCE(@DepartmentName,DepartmentName),
-            DepartmentCode =COALESCE( @DepartmentCode,DepartmentCode),
-            ManagerID = COALESCE(@ManagerID,DepartmentCode),
-            IsActive = COALESCE(ISNULL(@IsActive, IsActive))
+        SET DepartmentName = COALESCE(@DepartmentName, DepartmentName),
+            DepartmentCode = COALESCE(@DepartmentCode, DepartmentCode),
+             ManagerID = COALESCE(@ManagerID, ManagerID),
+             IsActive = COALESCE(@IsActive, IsActive)
         WHERE DepartmentID = @DepartmentID;
         
         
@@ -2802,6 +2802,9 @@ GO
 -- =============================================
 -- Encounter PROCEDURES
 -- =============================================
+
+
+
 --Start Consulation
 
 CREATE OR ALTER PROCEDURE StartConsultation
@@ -3104,11 +3107,326 @@ BEGIN
 END;
 GO
 
+-- =============================================
+-- Clinical_Management.VitalSigns PROCEDURES
+-- =============================================
+
+CREATE OR ALTER PROCEDURE Clinical_Management.CreateVitalSigns
+    @EncounterId INT,
+    @Temperature DECIMAL(4,2) = NULL,
+    @BloodPressure NVARCHAR(20) = NULL,
+    @HeartRate INT = NULL,
+    @RespiratoryRate INT = NULL,
+    @OxygenSaturation DECIMAL(5,2) = NULL,
+    @Height DECIMAL(5,2) = NULL,
+    @Weight DECIMAL(5,2) = NULL,
+    @BloodGlucose DECIMAL(5,2) = NULL,
+    @PainScore INT = NULL,
+    @Notes NVARCHAR(500) = NULL,
+    @RecordedBy INT,
+    @VitalSignId INT OUTPUT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+
+        IF @EncounterId IS NULL OR @RecordedBy IS NULL
+            THROW 50001, 'EncounterId and RecordedBy are required', 1;
+
+    
+        IF NOT EXISTS (
+            SELECT 1 FROM Clinical_Management.Encounters 
+            WHERE EncounterId = @EncounterId AND Status = 'Active'
+        )
+            THROW 50002, 'Active encounter not found', 1;
+
+        -- Validate staff exists
+        IF NOT EXISTS (SELECT 1 FROM Core_system.Staff WHERE StaffId = @RecordedBy AND IsActive = 1)
+            THROW 50003, 'Recording staff not found or inactive', 1;
+
+
+        IF @RespiratoryRate IS NOT NULL AND (@RespiratoryRate < 6 OR @RespiratoryRate > 60)
+            THROW 50006, 'Respiratory rate must be between 6 and 60 breaths/min', 1;
+
+        IF @OxygenSaturation IS NOT NULL AND (@OxygenSaturation < 70 OR @OxygenSaturation > 100)
+            THROW 50007, 'Oxygen saturation must be between 70% and 100%', 1;
+
+        IF @PainScore IS NOT NULL AND (@PainScore < 0 OR @PainScore > 10)
+            THROW 50008, 'Pain score must be between 0 and 10', 1;
+
+        -- Insert vital signs
+        INSERT INTO Clinical_Management.VitalSigns (
+            EncounterId,
+            Temperature,
+            BloodPressure,
+            HeartRate,
+            RespiratoryRate,
+            OxygenSaturation,
+            Height,
+            Weight,
+            BloodGlucose,
+            PainScore,
+            Notes,
+            RecordedBy
+        )
+        VALUES (
+            @EncounterId,
+            @Temperature,
+            @BloodPressure,
+            @HeartRate,
+            @RespiratoryRate,
+            @OxygenSaturation,
+            @Height,
+            @Weight,
+            @BloodGlucose,
+            @PainScore,
+            @Notes,
+            @RecordedBy
+        );
+
+        SET @VitalSignId = SCOPE_IDENTITY();
+
+        COMMIT TRANSACTION;
+
+        SELECT 
+            @VitalSignId AS VitalSignId,
+            'Vital signs recorded successfully' AS Message;
+
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @ErrorMessage NVARCHAR(4000) = 'Error creating vital signs: ' + ERROR_MESSAGE();
+        THROW 50000, @ErrorMessage, 1;
+    END CATCH
+END;
+GO
+CREATE OR ALTER PROCEDURE GetVitalSignsByEncounter
+    @EncounterId INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validate encounter exists
+    IF NOT EXISTS (SELECT 1 FROM Clinical_Management.Encounters WHERE EncounterId = @EncounterId)
+    BEGIN
+        SELECT 'Encounter not found' AS Message;
+        RETURN;
+    END
+
+    SELECT 
+        vs.VitalSignId,
+        vs.EncounterId,
+        vs.Temperature,
+        vs.BloodPressure,
+        vs.HeartRate,
+        vs.RespiratoryRate,
+        vs.OxygenSaturation,
+        vs.Height,
+        vs.Weight,
+        vs.BMI,
+        vs.BloodGlucose,
+        vs.PainScore,
+        vs.Notes,
+        vs.RecordedAt,
+        vs.RecordedBy,
+        s.FullName AS RecordedByName,
+        -- Categorize vital signs
+        CASE 
+            WHEN vs.Temperature < 36 THEN 'Low'
+            WHEN vs.Temperature > 37.5 THEN 'High'
+            ELSE 'Normal'
+        END AS TemperatureStatus,
+        CASE 
+            WHEN vs.HeartRate < 60 THEN 'Low'
+            WHEN vs.HeartRate > 100 THEN 'High' 
+            ELSE 'Normal'
+        END AS HeartRateStatus,
+        CASE 
+            WHEN vs.OxygenSaturation < 95 THEN 'Low'
+            ELSE 'Normal'
+        END AS OxygenStatus
+    FROM Clinical_Management.VitalSigns vs
+    INNER JOIN Core_system.Staff s ON vs.RecordedBy = s.StaffId
+    WHERE vs.EncounterId = @EncounterId
+    ORDER BY vs.RecordedAt DESC;
+END;
+GO
+
+
+CREATE OR ALTER PROCEDURE Clinical_Management.UpdateVitalSigns
+    @VitalSignId INT,
+    @Temperature DECIMAL(4,2) = NULL,
+    @BloodPressure NVARCHAR(20) = NULL,
+    @HeartRate INT = NULL,
+    @RespiratoryRate INT = NULL,
+    @OxygenSaturation DECIMAL(5,2) = NULL,
+    @Height DECIMAL(5,2) = NULL,
+    @Weight DECIMAL(5,2) = NULL,
+    @BloodGlucose DECIMAL(5,2) = NULL,
+    @PainScore INT = NULL,
+    @Notes NVARCHAR(500) = NULL,
+    @UpdatedBy INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        
+        IF @VitalSignId IS NULL OR @UpdatedBy IS NULL
+            THROW 50001, 'VitalSignId and UpdatedBy are required', 1;
+
+       
+        IF NOT EXISTS (SELECT 1 FROM Clinical_Management.VitalSigns WHERE VitalSignId = @VitalSignId)
+            THROW 50002, 'Vital signs record not found', 1;
+
+ 
+        IF NOT EXISTS (SELECT 1 FROM Core_system.Staff WHERE StaffId = @UpdatedBy AND IsActive = 1)
+            THROW 50003, 'Updating staff not found or inactive', 1;
+
+        IF @PainScore IS NOT NULL AND (@PainScore < 0 OR @PainScore > 10)
+            THROW 50006, 'Pain score must be between 0 and 10', 1;
+
+        -- Update vital signs
+        UPDATE Clinical_Management.VitalSigns
+        SET 
+            Temperature = COALESCE(@Temperature, Temperature),
+            BloodPressure = COALESCE(@BloodPressure, BloodPressure),
+            HeartRate = COALESCE(@HeartRate, HeartRate),
+            RespiratoryRate = COALESCE(@RespiratoryRate, RespiratoryRate),
+            OxygenSaturation = COALESCE(@OxygenSaturation, OxygenSaturation),
+            Height = COALESCE(@Height, Height),
+            Weight = COALESCE(@Weight, Weight),
+            BloodGlucose = COALESCE(@BloodGlucose, BloodGlucose),
+            PainScore = COALESCE(@PainScore, PainScore),
+            Notes = COALESCE(@Notes, Notes),
+            RecordedBy = @UpdatedBy,  -- Track who made the update
+            RecordedAt = GETDATE()    -- Update timestamp
+        WHERE VitalSignId = @VitalSignId;
+
+        COMMIT TRANSACTION;
+
+        SELECT 
+            @VitalSignId AS VitalSignId,
+            'Vital signs updated successfully' AS Message;
+
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @ErrorMessage NVARCHAR(4000) = 'Error updating vital signs: ' + ERROR_MESSAGE();
+        THROW 50000, @ErrorMessage, 1;
+    END CATCH
+END;
+GO
+
+CREATE OR ALTER PROCEDURE GetPatientVitalSignsHistory
+    @PatientId INT,
+    @DaysBack INT = 30
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Validate patient exists
+    IF NOT EXISTS (SELECT 1 FROM Patient_Management.Patient WHERE PatientId = @PatientId AND IsActive = 1)
+    BEGIN
+        SELECT 'Patient not found' AS Message;
+        RETURN;
+    END
+
+    SELECT 
+        vs.VitalSignId,
+        vs.EncounterId,
+        e.EncounterNumber,
+        e.EncounterDate,
+        vs.Temperature,
+        vs.BloodPressure,
+        vs.HeartRate,
+        vs.RespiratoryRate,
+        vs.OxygenSaturation,
+        vs.Height,
+        vs.Weight,
+        vs.BMI,
+        vs.BloodGlucose,
+        vs.PainScore,
+        vs.Notes,
+        vs.RecordedAt,
+        s.FullName AS RecordedByName,
+        doc.FullName AS DoctorName,
+        
+        LAG(vs.HeartRate) OVER (PARTITION BY e.PatientId ORDER BY vs.RecordedAt) AS PreviousHeartRate,
+        LAG(vs.BloodPressure) OVER (PARTITION BY e.PatientId ORDER BY vs.RecordedAt) AS PreviousBloodPressure,
+        LAG(vs.Temperature) OVER (PARTITION BY e.PatientId ORDER BY vs.RecordedAt) AS PreviousTemperature
+    FROM Clinical_Management.VitalSigns vs
+    INNER JOIN Clinical_Management.Encounters e ON vs.EncounterId = e.EncounterId
+    INNER JOIN Core_system.Staff s ON vs.RecordedBy = s.StaffId
+    INNER JOIN Core_system.Staff doc ON e.PhysicianID = doc.StaffId
+    WHERE e.PatientId = @PatientId
+      AND vs.RecordedAt >= DATEADD(DAY, -@DaysBack, GETDATE())
+    ORDER BY vs.RecordedAt DESC;
+END;
+GO
 
 
 
+CREATE OR ALTER PROCEDURE DeleteVitalSigns
+    @VitalSignId INT,
+    @DeletedBy INT,
+    @PatientID INT , 
+    @EnconterID INT 
 
+AS
+BEGIN
+    SET NOCOUNT ON;
+    BEGIN TRY
+        BEGIN TRANSACTION;
 
+        -- Validation
+        IF @VitalSignId IS NULL OR @DeletedBy IS NULL
+            THROW 50001, 'VitalSignId and DeletedBy are required', 1;
+
+        -- Validate vital signs record exists
+        IF NOT EXISTS (SELECT 1 FROM Clinical_Management.VitalSigns WHERE VitalSignId = @VitalSignId)
+            THROW 50002, 'Vital signs record not found', 1;
+
+        -- Validate staff has permission
+        IF NOT EXISTS (
+            SELECT 1 FROM Core_system.Staff 
+            WHERE StaffId = @DeletedBy AND IsActive = 1
+        )
+            THROW 50003, 'Staff not authorized to delete vital signs', 1;
+
+        -- Check if encounter is still active (prevent deletion of active encounter vitals)
+        IF EXISTS (
+            SELECT 1 FROM Clinical_Management.VitalSigns vs
+            INNER JOIN Clinical_Management.Encounters e ON vs.EncounterId = e.EncounterId
+            WHERE vs.VitalSignId = @VitalSignId AND e.Status = 'Active'
+        )
+            THROW 50004, 'Cannot delete vital signs for active encounter', 1;
+
+        -- Delete the record
+        DELETE FROM Clinical_Management.VitalSigns 
+        WHERE VitalSignId = @VitalSignId;
+
+        COMMIT TRANSACTION;
+
+        SELECT 'Vital signs record deleted successfully' AS Message;
+
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @ErrorMessage NVARCHAR(4000) = 'Error deleting vital signs: ' + ERROR_MESSAGE();
+        THROW 50000, @ErrorMessage, 1;
+    END CATCH
+END;
+GO
 
 --CREATE PROCEDURE Emergency_ToggleAvailability
 --    @DoctorID INT,
