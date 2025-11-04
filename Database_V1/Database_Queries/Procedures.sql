@@ -4411,11 +4411,172 @@ AS BEGIN
     END CATCH
 END
 GO
+-- =============================================
+-- INPATIENT MANAGEMENT Admissions
+-- =============================================
+GO
+--usp Create_Admission
+CREATE PROCEDURE Create_Admission
+    @PatientId INT,
+    @EncounterId INT,
+    @AdmittingPhysicianID INT,
+    @AdmissionDate DATETIME2,
+    @AdmittedFrom NVARCHAR(50),
+    @BedID INT,
+    @AdmissionReason NVARCHAR(500),
+    @CreatedBy INT
+AS BEGIN
+    SET NOCOUNT ON
+    BEGIN TRY
+        BEGIN TRANSACTION
+
+        IF @PatientId IS NULL OR @AdmittingPhysicianID IS NULL OR @BedID IS NULL OR @CreatedBy IS NULL
+            THROW 50001, 'Patient, Physician, Bed and Created By are required', 1;
+
+        IF NOT EXISTS (SELECT 1 FROM Patient_Management.Patient WHERE PatientId = @PatientId AND IsActive = 1)
+            THROW 50002, 'Patient not found or inactive', 1;
+
+        IF @EncounterId IS NOT NULL AND NOT EXISTS (SELECT 1 FROM Clinical_Management.Encounters WHERE EncounterId = @EncounterId)
+            THROW 50003, 'Encounter not found', 1;
+
+        IF NOT EXISTS (SELECT 1 FROM Core_system.Staff WHERE StaffId = @AdmittingPhysicianID AND IsActive = 1)
+            THROW 50004, 'Admitting physician not found or inactive', 1;
+
+        IF NOT EXISTS (SELECT 1 FROM Inpatient_Management.Beds WHERE BedID = @BedID AND BedStatus = 'Available')
+            THROW 50005, 'Bed not available', 1;
 
 
+        INSERT INTO Inpatient_Management.Admissions (
+            PatientId, EncounterId, AdmittingPhysicianID, AdmissionDate, 
+            AdmittedFrom, BedID, AdmissionReason, CreatedBy
+        )
+        VALUES (
+            @PatientId, @EncounterId, @AdmittingPhysicianID, @AdmissionDate,
+            @AdmittedFrom, @BedID, @AdmissionReason, @CreatedBy
+        );
 
+        UPDATE Inpatient_Management.Beds SET BedStatus = 'Occupied' WHERE BedID = @BedID;
 
+        COMMIT TRANSACTION
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        DECLARE @Error NVARCHAR(4000) = 'Error creating admission: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
 
+CREATE PROCEDURE Discharge_Patient
+    @AdmissionId INT,
+    @DischargeDate DATETIME2
+AS BEGIN
+    SET NOCOUNT ON
+    BEGIN TRY
+        BEGIN TRANSACTION
+
+        IF @AdmissionId IS NULL OR @DischargeDate IS NULL OR @UpdatedBy IS NULL
+            THROW 50001, 'Admission ID, Discharge Date and Updated By are required', 1;
+
+        DECLARE @BedID INT, @CurrentStatus NVARCHAR(20);
+        
+        SELECT @BedID = BedID, @CurrentStatus = Status 
+        FROM Inpatient_Management.Admissions 
+        WHERE AdmissionId = @AdmissionId;
+
+        IF @BedID IS NULL
+            THROW 50002, 'Admission not found', 1;
+
+        IF @CurrentStatus != 'Active'
+            THROW 50003, 'Only active admissions can be discharged', 1;
+
+        UPDATE Inpatient_Management.Admissions 
+        SET DischargeDate = @DischargeDate, Status = 'Discharged'
+        WHERE AdmissionId = @AdmissionId;
+
+        UPDATE Inpatient_Management.Beds SET BedStatus = 'Available' WHERE BedID = @BedID;
+
+        COMMIT TRANSACTION
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        DECLARE @Error NVARCHAR(4000) = 'Error discharging patient: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
+
+--usp-GetActive_Admissions
+CREATE PROCEDURE GetActive_Admissions
+AS BEGIN
+    SET NOCOUNT ON
+    BEGIN TRY
+        SELECT 
+            a.AdmissionId,
+            a.PatientId,
+            a.EncounterId,
+            a.AdmittingPhysicianID,
+            a.AdmissionDate,
+            a.DischargeDate,
+            a.AdmittedFrom,
+            a.BedID,
+            a.AdmissionReason,
+            a.Status,
+            a.TotalCharges,
+            p.FirstName + ' ' + p.LastName AS PatientName,
+            p.MRN,
+            s.FullName AS PhysicianName,
+            b.WardID,
+            b.BedNumber
+        FROM Inpatient_Management.Admissions a
+        INNER JOIN Patient_Management.Patient p ON a.PatientId = p.PatientID
+        INNER JOIN Core_system.Staff s ON a.AdmittingPhysicianID = s.StaffId
+        INNER JOIN Inpatient_Management.Beds b ON a.BedID = b.BedID
+        WHERE a.Status = 'Active'
+        ORDER BY a.AdmissionDate DESC;
+    END TRY
+    BEGIN CATCH
+        DECLARE @Error NVARCHAR(4000) = 'Error fetching active admissions: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
+
+--usp-GetbyId_Amission
+CREATE PROCEDURE GetbyId_Amission @AdmissionId INT 
+AS BEGIN
+    SET NOCOUNT ON
+    BEGIN TRY
+        SELECT 
+            a.AdmissionId,
+            a.PatientId,
+            a.EncounterId,
+            a.AdmittingPhysicianID,
+            a.AdmissionDate,
+            a.DischargeDate,
+            a.AdmittedFrom,
+            a.BedID,
+            a.AdmissionReason,
+            a.Status,
+            a.TotalCharges,
+            p.FirstName + ' ' + p.LastName AS PatientName,
+            p.MRN,
+            s.FullName AS PhysicianName,
+            b.WardID,
+            b.BedNumber
+        FROM Inpatient_Management.Admissions a
+        INNER JOIN Patient_Management.Patient p ON a.PatientId = p.PatientID
+        INNER JOIN Core_system.Staff s ON a.AdmittingPhysicianID = s.StaffId
+        INNER JOIN Inpatient_Management.Beds b ON a.BedID = b.BedID
+        WHERE a.AdmissionId = @AdmissionId
+        ORDER BY a.AdmissionDate DESC;
+    END TRY
+    BEGIN CATCH
+        DECLARE @Error NVARCHAR(4000) = 'Error fetching active admissions: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
 
 
 
