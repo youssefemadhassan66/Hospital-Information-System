@@ -115,3 +115,16 @@ ALTER TABLE Clinical_Management.EncountersADD CONSTRAINT FK_Queue_Encounters FOR
 use HIS_V1 
 ALTER TABLE Clinical_Management.Encounters
 ADD ChiefComplaint NVARCHAR(500)  NULL 
+use HIS_V1 
+ALTER TABLE Clinical_Management.Prescriptions
+
+ADD CONSTRAINT FK_Prescriptions_Encounter FOREIGN KEY (EncounterId) REFERENCES Clinical_Management.Encounters(EncounterId)
+
+use HIS_V1 
+ALTER TABLE Clinical_Management.Prescriptions
+ALTER COLUMN MedicationId  INT NULL;
+
+
+USE HIS_V1
+ALTER TABLE Clinical_Management.Prescriptions
+ADD MedicationName NVARCHAR(200);

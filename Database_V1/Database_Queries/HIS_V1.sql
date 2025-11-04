@@ -305,7 +305,9 @@ CREATE TABLE Medication_Management.Medications (
 CREATE TABLE Clinical_Management.Prescriptions (
     PrescriptionId INT IDENTITY(1,1) PRIMARY KEY,
     PatientId INT NOT NULL,
-    MedicationId INT NOT NULL,
+    EncounterId INT NOT NULL ,
+    MedicationId INT NULL,
+    MedicationName NVARCHAR(200),
     PrescribedBy INT NOT NULL,
     Dosage NVARCHAR(100) NOT NULL, 
     Frequency NVARCHAR(50) NOT NULL,
@@ -318,6 +320,7 @@ CREATE TABLE Clinical_Management.Prescriptions (
     CONSTRAINT FK_Prescriptions_Patient FOREIGN KEY (PatientId) REFERENCES Patient_Management.Patient(PatientId),
     CONSTRAINT FK_Prescriptions_Medication FOREIGN KEY (MedicationId) REFERENCES Medication_Management.Medications(MedicationId),
     CONSTRAINT FK_Prescriptions_PrescribedBy FOREIGN KEY (PrescribedBy) REFERENCES Core_system.Staff(StaffId)
+    CONSTRAINT FK_Prescriptions_Encounter FOREIGN KEY (EncounterId) REFERENCES Clinical_Management.Encounters(EncounterId)
 );
 
 -- =============================================

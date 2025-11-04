@@ -3846,14 +3846,14 @@ CREATE PROCEDURE Create_Prescription
 
         IF @MedicationId IS NULL AND @MedicationName IS NULL 
         THROW 50001,'Provide ethier Medication id or Name',1;
-IF @Dosage IS NULL OR @Frequency IS NULL OR @Duration IS NULL OR @Quantity IS NULL
-    THROW 50001,'Dosage, Frequency, Duration and Quantity are required',1;
+        IF @Dosage IS NULL OR @Frequency IS NULL OR @Duration IS NULL OR @Quantity IS NULL
+            THROW 50001,'Dosage, Frequency, Duration and Quantity are required',1;
 
-    IF @StartDate IS NULL
-    SET @StartDate = GETDATE();
+        IF @StartDate IS NULL
+          SET @StartDate = GETDATE();
 
-    IF @Status IS NULL
-    SET @Status = 'Active';
+        IF @Status IS NULL
+         SET @Status = 'Active';
 
     BEGIN TRANSACTION;
 
@@ -3901,7 +3901,7 @@ END
 GO
 --usp_Prescription_Update
 
-
+GO
 CREATE PROCEDURE Update_Prescription
     @PrescriptionId INT,
     @PatientId INT = NULL,
@@ -3974,8 +3974,39 @@ BEGIN CATCH
     DECLARE @ErrorMessage NVARCHAR(4000) = 'Error updating prescription: ' + ERROR_MESSAGE();
     THROW 50000, @ErrorMessage, 1;
 END CATCH
---usp_Prescription_Cancel
+END
+GO
+--usp_Prescription_Delete
+GO
+CREATE PROCEDURE Delete_Prescription
+@PrescriptionId INT
+AS BEGIN
+SET NOCOUNT ON
+BEGIN TRY
+BEGIN TRANSACTION;
+    IF @PrescriptionId IS NULL
+        THROW 50001,'Prescription ID is required',1;
+
+    IF NOT EXISTS (SELECT 1 FROM Clinical_Management.Prescriptions WHERE PrescriptionId = @PrescriptionId)
+        THROW 50002,'Prescription not found',1;
+
+    DELETE FROM Clinical_Management.Prescriptions
+    WHERE PrescriptionId = @PrescriptionId;
+
+    COMMIT TRANSACTION;
+
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRANSACTION;
+    
+    DECLARE @Error NVARCHAR(4000) = 'Error deleting prescription: ' + ERROR_MESSAGE();
+    THROW 50000, @Error, 1;
+END CATCH
+END
+GO
 --usp_Prescription_GetByPatient
+GO
 CREATE PROCEDURE GetPrescriptions_ByPatient
 @PatientId INT
 AS BEGIN
@@ -4013,29 +4044,373 @@ THROW 50001,'Patient ID is required',1;
 
 END TRY
 BEGIN CATCH
-    DECLARE @ErrorMessage NVARCHAR(4000) = 'Error fetching prescriptions: ' + ERROR_MESSAGE();
-    THROW 50000, @ErrorMessage, 1;
+    DECLARE @Error NVARCHAR(4000) = 'Error fetching prescriptions: ' + ERROR_MESSAGE();
+    THROW 50000, @Error, 1;
 END CATCH
---usp_Prescription_GetActive
-
+END
+GO
 --usp_Prescription_GetBYId
+GO
+CREATE PROCEDURE GetPrescription_ById
+@PrescriptionId INT
+AS BEGIN
+SET NOCOUNT ON
+BEGIN TRY
+IF @PrescriptionId IS NULL
+THROW 50001,'Prescription ID is required',1;
+
+    SELECT 
+        p.PrescriptionId,
+        p.PatientId,
+        p.MedicationId,
+        p.EncounterId,
+        p.MedicationName,
+        p.PrescribedBy,
+        p.Dosage,
+        p.Frequency,
+        p.Duration,
+        p.Quantity,
+        p.Instructions,
+        p.StartDate,
+        p.Status,
+        pa.FirstName + ' ' + pa.LastName AS PatientName,
+        pa.MRN,
+        s.FullName AS DoctorName,
+        e.EncounterDate
+    FROM Clinical_Management.Prescriptions p
+    INNER JOIN Patient_Management.Patient pa ON p.PatientId = pa.PatientID
+    INNER JOIN Core_system.Staff s ON p.PrescribedBy = s.StaffId
+    INNER JOIN Clinical_Management.Encounters e ON p.EncounterId = e.EncounterId
+    WHERE p.PrescriptionId = @PrescriptionId;
+
+    IF @@ROWCOUNT = 0
+        THROW 50002,'Prescription not found',1;
+
+END TRY
+BEGIN CATCH
+    DECLARE @Error NVARCHAR(4000) = 'Error fetching prescription: ' + ERROR_MESSAGE();
+    THROW 50000, @Error, 1;
+END CATCH
+END
+GO
+
+
+--usp_Prescription_GetActive
+GO
+
+CREATE PROCEDURE GetActive_Prescriptions
+@PatientId INT = NULL
+AS BEGIN
+SET NOCOUNT ON
+BEGIN TRY
+IF @PatientId IS NOT NULL
+BEGIN
+IF NOT EXISTS (SELECT 1 FROM Patient_Management.Patient WHERE PatientId = @PatientId AND IsActive = 1)
+THROW 50002,'Patient not found or inactive',1;
+        SELECT 
+            p.PrescriptionId,
+            p.PatientId,
+            p.MedicationId,
+            p.EncounterId,
+            p.MedicationName,
+            p.PrescribedBy,
+            p.Dosage,
+            p.Frequency,
+            p.Duration,
+            p.Quantity,
+            p.Instructions,
+            p.StartDate,
+            p.Status,
+            pa.FirstName + ' ' + pa.LastName AS PatientName,
+            pa.MRN,
+            s.FullName AS DoctorName,
+            e.EncounterDate
+        FROM Clinical_Management.Prescriptions p
+        INNER JOIN Patient_Management.Patient pa ON p.PatientId = pa.PatientID
+        INNER JOIN Core_system.Staff s ON p.PrescribedBy = s.StaffId
+        INNER JOIN Clinical_Management.Encounters e ON p.EncounterId = e.EncounterId
+        WHERE p.PatientId = @PatientId AND p.Status = 'Active'
+        ORDER BY p.StartDate DESC;
+    END
+    ELSE
+    BEGIN
+        SELECT 
+            p.PrescriptionId,
+            p.PatientId,
+            p.MedicationId,
+            p.EncounterId,
+            p.MedicationName,
+            p.PrescribedBy,
+            p.Dosage,
+            p.Frequency,
+            p.Duration,
+            p.Quantity,
+            p.Instructions,
+            p.StartDate,
+            p.Status,
+            pa.FirstName + ' ' + pa.LastName AS PatientName,
+            pa.MRN,
+            s.FullName AS DoctorName,
+            e.EncounterDate
+        FROM Clinical_Management.Prescriptions p
+        INNER JOIN Patient_Management.Patient pa ON p.PatientId = pa.PatientID
+        INNER JOIN Core_system.Staff s ON p.PrescribedBy = s.StaffId
+        INNER JOIN Clinical_Management.Encounters e ON p.EncounterId = e.EncounterId
+        WHERE p.Status = 'Active'
+        ORDER BY p.StartDate DESC;
+    END
+
+END TRY
+BEGIN CATCH
+    DECLARE @Error NVARCHAR(4000) = 'Error fetching active prescriptions: ' + ERROR_MESSAGE();
+    THROW 50000, @Error, 1;
+END CATCH
+END
+GO
+
+
+
+-- =============================================
+-- Clinical_Management.Oreders PROCEDURES
+-- =============================================
+
+
+--usp_Order_Create
+GO
+CREATE PROCEDURE Create_Order 
+    @EncounterID INT NOT NULL,          
+    @OrderingPhysicianID INT NOT NULL,
+    @OrderDescription NVARCHAR(500) NULL, 
+    @OrderType NVARCHAR(50) NOT NULL,  
+    @OrderDate DATETIME ,
+    @Priority NVARCHAR(10) ,
+    @Status NVARCHAR(20) 
+    AS BEGIN
+    SET NOCOUNT ON 
+    BEGIN TRY
+
+        BEGIN TRANSACTION
+        IF @EncounterId IS NULL OR @OrderingPhysicianID  IS NULL
+            THROW 50001,'Encounter ID And Doctor ID are required ',1;
+
+      IF NOT EXISTS (
+            SELECT 1 
+            FROM Clinical_Management.Encounters 
+            WHERE EncounterId  = @EncounterID 
+        )
+            THROW 50003, 'Encounter not found', 1;
+
+  
+
+        
+        IF NOT EXISTS (
+            SELECT 1 
+            FROM Core_system.Staff s 
+            INNER JOIN Core_system.Users u ON s.UserID = u.UserID
+            WHERE s.StaffId = @OrderingPhysicianID 
+            AND s.IsActive = 1
+            AND u.RoleID IN (
+                SELECT RoleID 
+                FROM Core_system.Roles 
+                WHERE RoleName IN ('Doctor', 'Physician', 'Surgeon', 'Resident')
+            )
+        )
+        THROW 50003, 'Doctor must be an active medical doctor', 1;
+
+        IF @OrderType IS NULL 
+            THROW 50003, 'Order type is required', 1;
+        
+        INSERT INTO Order_Management.Orders (EncounterID,OrderingPhysicianID,OrderDescription,OrderType,OrderDate,Priority,Status)
+        values(
+             @EncounterID ,          
+            @OrderingPhysicianID ,
+            @OrderDescription , 
+            @OrderType ,  
+            @OrderDate ,
+            @Priority ,
+            @Status  
+            )
+     IF @Priority IS NULL
+        SET @Priority = 'Normal';
+        
+    IF @Status IS NULL
+        SET @Status = 'Pending';
+
+
+        COMMIT TRANSACTION
+    END TRY 
+    BEGIN CATCH 
+        IF @@TRANCOUNT > 0 
+            ROLLBACK TRANSACTION
+        
+        DECLARE @Error NVARCHAR(4000) = 'Error creating order: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+    END
 
 
 
 
 
+GO
+--usp_Order_Update
+CREATE PROCEDURE Update_Order
+    @OrderID INT,
+    @OrderDescription NVARCHAR(500) = NULL,
+    @OrderType NVARCHAR(50) = NULL,
+    @Priority NVARCHAR(10) = NULL,
+    @Status NVARCHAR(20) = NULL,
 
+AS BEGIN
+    SET NOCOUNT ON 
+    BEGIN TRY
+        BEGIN TRANSACTION
 
+        IF @OrderID IS NULL OR @UpdatedBy IS NULL
+            THROW 50001, 'Order ID and Updated By are required', 1;
 
+        IF NOT EXISTS (SELECT 1 FROM Order_Management.Orders WHERE OrderID = @OrderID)
+            THROW 50002, 'Order not found', 1;
 
+        IF NOT EXISTS (SELECT 1 FROM Core_system.Staff WHERE StaffId = @UpdatedBy AND IsActive = 1)
+            THROW 50003, 'Updated by staff not found or inactive', 1;
 
+        UPDATE Order_Management.Orders 
+        SET OrderDescription = COALESCE(@OrderDescription, OrderDescription),
+            OrderType = COALESCE(@OrderType, OrderType),
+            Priority = COALESCE(@Priority, Priority),
+            Status = COALESCE(@Status, Status)
+        WHERE OrderID = @OrderID;
 
+        COMMIT TRANSACTION
+    END TRY 
+    BEGIN CATCH 
+        IF @@TRANCOUNT > 0 
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @Error NVARCHAR(4000) = 'Error updating order: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
 
+GO
 
+--usp_Order_GetByEncounter
+GO
+CREATE PROCEDURE GetOrders_ByEncounter
+    @EncounterID INT
+AS BEGIN
+    SET NOCOUNT ON 
+    BEGIN TRY
+        IF @EncounterID IS NULL
+            THROW 50001, 'Encounter ID is required', 1;
 
+        IF NOT EXISTS (SELECT 1 FROM Clinical_Management.Encounters WHERE EncounterId = @EncounterID)
+            THROW 50002, 'Encounter not found', 1;
 
+        SELECT 
+            o.OrderID,
+            o.EncounterID,
+            o.OrderingPhysicianID,
+            o.OrderDescription,
+            o.OrderType,
+            o.OrderDate,
+            o.Priority,
+            o.Status,
+            pa.PatientID,
+            pa.FirstName + ' ' + pa.LastName AS PatientName,
+            pa.MRN,
+            s.FullName AS PhysicianName,
+            e.EncounterDate
+        FROM Order_Management.Orders o
+        INNER JOIN Clinical_Management.Encounters e ON o.EncounterID = e.EncounterId
+        INNER JOIN Patient_Management.Patient pa ON e.PatientId = pa.PatientID
+        INNER JOIN Core_system.Staff s ON o.OrderingPhysicianID = s.StaffId
+        WHERE o.EncounterID = @EncounterID
+        ORDER BY o.OrderDate DESC;
 
+    END TRY 
+    BEGIN CATCH 
+        DECLARE @Error NVARCHAR(4000) = 'Error fetching orders by encounter: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
 
+--usp_Order_GetByPatient
+GO
+CREATE PROCEDURE GetOrders_ByPatient
+    @PatientID INT
+AS BEGIN
+    SET NOCOUNT ON 
+    BEGIN TRY
+        IF @PatientID IS NULL
+            THROW 50001, 'Patient ID is required', 1;
+
+        IF NOT EXISTS (SELECT 1 FROM Patient_Management.Patient WHERE PatientID = @PatientID AND IsActive = 1)
+            THROW 50002, 'Patient not found or inactive', 1;
+
+        SELECT 
+            o.OrderID,
+            o.EncounterID,
+            o.OrderingPhysicianID,
+            o.OrderDescription,
+            o.OrderType,
+            o.OrderDate,
+            o.Priority,
+            o.Status,
+            pa.PatientID,
+            pa.FirstName + ' ' + pa.LastName AS PatientName,
+            pa.MRN,
+            s.FullName AS PhysicianName,
+            e.EncounterDate
+        FROM Order_Management.Orders o
+        INNER JOIN Clinical_Management.Encounters e ON o.EncounterID = e.EncounterId
+        INNER JOIN Patient_Management.Patient pa ON e.PatientId = pa.PatientID
+        INNER JOIN Core_system.Staff s ON o.OrderingPhysicianID = s.StaffId
+        WHERE pa.PatientID = @PatientID
+        ORDER BY o.OrderDate DESC;
+
+    END TRY 
+    BEGIN CATCH 
+        DECLARE @Error NVARCHAR(4000) = 'Error fetching orders by patient: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
+--DELETE ORDER
+
+CREATE PROCEDURE Delete_Order
+    @OrderID INT,
+    @DeletedBy INT
+AS BEGIN
+    SET NOCOUNT ON 
+    BEGIN TRY
+        BEGIN TRANSACTION
+
+        IF @OrderID IS NULL OR @DeletedBy IS NULL
+            THROW 50001, 'Order ID and Deleted By are required', 1;
+
+        IF NOT EXISTS (SELECT 1 FROM Order_Management.Orders WHERE OrderID = @OrderID)
+            THROW 50002, 'Order not found', 1;
+
+        IF NOT EXISTS (SELECT 1 FROM Core_system.Staff WHERE StaffId = @DeletedBy AND IsActive = 1)
+            THROW 50003, 'Deleted by staff not found or inactive', 1;
+
+        DELETE FROM Order_Management.Orders 
+        WHERE OrderID = @OrderID;
+
+        COMMIT TRANSACTION
+    END TRY 
+    BEGIN CATCH 
+        IF @@TRANCOUNT > 0 
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @Error NVARCHAR(4000) = 'Error deleting order: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
 
 
 
