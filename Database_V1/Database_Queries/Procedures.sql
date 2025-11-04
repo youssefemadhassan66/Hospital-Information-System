@@ -3789,8 +3789,236 @@ GO
 -- Clinical_Management.Prescription PROCEDURES
 -- =============================================
 
+--usp_Prescription_Prescribe
+GO
+CREATE PROCEDURE Create_Prescription 
+    
+    @PatientId INT NOT NULL,
+    @MedicationId INT NULL,
+    @EncounterId INT NOT NULL,
+    @MedicationName NVARCHAR(200) NULL,
+    @PrescribedBy INT NOT NULL,
+    @Dosage NVARCHAR(100) NOT NULL, 
+    @Frequency NVARCHAR(50) NOT NULL,
+    @Duration INT NOT NULL,
+    @Quantity INT NOT NULL,
+    @Instructions NVARCHAR(200),
+    @StartDate DATE ,
+    @Status NVARCHAR(20)
+    
+    AS BEGIN 
+    SET NOCOUNT ON
+    BEGIN TRY 
+     IF @EncounterId IS NULL OR @PrescribedBy IS NULL OR @PatientId IS NULL 
+        THROW 50001,'Encounter ID And Doctor id and patient id are required ',1;
+
+      IF NOT EXISTS (
+            SELECT 1 
+            FROM Clinical_Management.Encounters 
+            WHERE EncounterId = @EncounterId 
+            AND PatientId = @PatientId
+        )
+            THROW 50003, 'Encounter not found or does not belong to the specified patient', 1;
+
+        
+        IF NOT EXISTS (
+            SELECT 1 
+            FROM Patient_Management.Patient 
+            WHERE PatientId = @PatientId 
+            AND IsActive = 1
+        )
+            THROW 50003, 'Patient not found or inactive', 1;
+
+        
+        IF NOT EXISTS (
+            SELECT 1 
+            FROM Core_system.Staff s 
+            INNER JOIN Core_system.Users u ON s.UserID = u.UserID
+            WHERE s.StaffId = @PrescribedBy 
+            AND s.IsActive = 1
+            AND u.RoleID IN (
+                SELECT RoleID 
+                FROM Core_system.Roles 
+                WHERE RoleName IN ('Doctor', 'Physician', 'Surgeon', 'Resident')
+            )
+        )
+        THROW 50003, 'Prescription staff must be an active medical doctor', 1;
+
+        IF @MedicationId IS NULL AND @MedicationName IS NULL 
+        THROW 50001,'Provide ethier Medication id or Name',1;
+IF @Dosage IS NULL OR @Frequency IS NULL OR @Duration IS NULL OR @Quantity IS NULL
+    THROW 50001,'Dosage, Frequency, Duration and Quantity are required',1;
+
+    IF @StartDate IS NULL
+    SET @StartDate = GETDATE();
+
+    IF @Status IS NULL
+    SET @Status = 'Active';
+
+    BEGIN TRANSACTION;
+
+    INSERT INTO Clinical_Management.Prescriptions(
+        PatientId,
+        MedicationId,
+        EncounterId,
+        MedicationName,
+        PrescribedBy,
+        Dosage,
+        Frequency,
+        Duration,
+        Quantity,
+        Instructions,
+        StartDate,
+        Status
+    )
+    VALUES(
+        @PatientId,
+        @MedicationId,
+        @EncounterId,
+        @MedicationName,
+        @PrescribedBy,
+        @Dosage,
+        @Frequency,
+        @Duration,
+        @Quantity,
+        @Instructions,
+        @StartDate,
+        @Status
+    );
+
+    COMMIT TRANSACTION;
+
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRANSACTION;
+    
+    DECLARE @ErrorMessage NVARCHAR(4000) = 'Error creating prescription: ' + ERROR_MESSAGE();
+    THROW 50000, @ErrorMessage, 1;
+END CATCH
+
+END
+GO
+--usp_Prescription_Update
 
 
+CREATE PROCEDURE Update_Prescription
+    @PrescriptionId INT,
+    @PatientId INT = NULL,
+    @MedicationId INT = NULL,
+    @EncounterId INT = NULL,
+    @MedicationName NVARCHAR(200) = NULL,
+    @PrescribedBy INT = NULL,
+    @Dosage NVARCHAR(100) = NULL,
+    @Frequency NVARCHAR(50) = NULL,
+    @Duration INT = NULL,
+    @Quantity INT = NULL,
+    @Instructions NVARCHAR(200) = NULL,
+    @StartDate DATE = NULL,
+    @Status NVARCHAR(20) = NULL
+    AS BEGIN
+    SET NOCOUNT ON
+    BEGIN TRY
+    BEGIN TRANSACTION;
+     IF @PrescriptionId IS NULL
+        THROW 50001,'Prescription ID is required',1;
+
+    IF NOT EXISTS (SELECT 1 FROM Clinical_Management.Prescriptions WHERE PrescriptionId = @PrescriptionId)
+        THROW 50002,'Prescription not found',1;
+
+    IF @EncounterId IS NOT NULL 
+        AND NOT EXISTS (SELECT 1 FROM Clinical_Management.Encounters WHERE EncounterId = @EncounterId)
+        THROW 50003, 'Encounter not found', 1;
+
+    IF @PatientId IS NOT NULL 
+        AND NOT EXISTS (SELECT 1 FROM Patient_Management.Patient WHERE PatientId = @PatientId AND IsActive = 1)
+        THROW 50003, 'Patient not found or inactive', 1;
+
+    IF @PrescribedBy IS NOT NULL 
+        AND NOT EXISTS (
+            SELECT 1 
+            FROM Core_system.Staff s 
+            INNER JOIN Core_system.Users u ON s.UserID = u.UserID
+            WHERE s.StaffId = @PrescribedBy 
+            AND s.IsActive = 1
+            AND u.RoleID IN (
+                SELECT RoleID 
+                FROM Core_system.Roles 
+                WHERE RoleName IN ('Doctor', 'Physician', 'Surgeon', 'Resident')
+            )
+        )
+        THROW 50003, 'Prescribing staff must be an active medical doctor', 1;
+
+    UPDATE Clinical_Management.Prescriptions
+    SET PatientId = COALESCE(@PatientId, PatientId),
+        MedicationId = COALESCE(@MedicationId, MedicationId),
+        EncounterId = COALESCE(@EncounterId, EncounterId),
+        MedicationName = COALESCE(@MedicationName, MedicationName),
+        PrescribedBy = COALESCE(@PrescribedBy, PrescribedBy),
+        Dosage = COALESCE(@Dosage, Dosage),
+        Frequency = COALESCE(@Frequency, Frequency),
+        Duration = COALESCE(@Duration, Duration),
+        Quantity = COALESCE(@Quantity, Quantity),
+        Instructions = COALESCE(@Instructions, Instructions),
+        StartDate = COALESCE(@StartDate, StartDate),
+        Status = COALESCE(@Status, Status)
+    WHERE PrescriptionId = @PrescriptionId;
+
+    COMMIT TRANSACTION;
+
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+        ROLLBACK TRANSACTION;
+    
+    DECLARE @ErrorMessage NVARCHAR(4000) = 'Error updating prescription: ' + ERROR_MESSAGE();
+    THROW 50000, @ErrorMessage, 1;
+END CATCH
+--usp_Prescription_Cancel
+--usp_Prescription_GetByPatient
+CREATE PROCEDURE GetPrescriptions_ByPatient
+@PatientId INT
+AS BEGIN
+SET NOCOUNT ON
+BEGIN TRY
+IF @PatientId IS NULL
+THROW 50001,'Patient ID is required',1;
+  IF NOT EXISTS (SELECT 1 FROM Patient_Management.Patient WHERE PatientId = @PatientId AND IsActive = 1)
+        THROW 50002,'Patient not found or inactive',1;
+
+    SELECT 
+        p.PrescriptionId,
+        p.PatientId,
+        p.MedicationId,
+        p.EncounterId,
+        p.MedicationName,
+        p.PrescribedBy,
+        p.Dosage,
+        p.Frequency,
+        p.Duration,
+        p.Quantity,
+        p.Instructions,
+        p.StartDate,
+        p.Status,
+          pa.FirstName + ' ' + pa.LastName AS PatientName,
+        pa.MRN,
+        s.FullName AS DoctorName,
+        e.EncounterDate
+    FROM Clinical_Management.Prescriptions p
+    INNER JOIN Patient_Management.Patient pa ON p.PatientId = pa.PatientID
+    INNER JOIN Core_system.Staff s ON p.PrescribedBy = s.StaffId
+    INNER JOIN Clinical_Management.Encounters e ON p.EncounterId = e.EncounterId
+    WHERE p.PatientId = @PatientId
+    ORDER BY p.StartDate DESC;
+
+END TRY
+BEGIN CATCH
+    DECLARE @ErrorMessage NVARCHAR(4000) = 'Error fetching prescriptions: ' + ERROR_MESSAGE();
+    THROW 50000, @ErrorMessage, 1;
+END CATCH
+--usp_Prescription_GetActive
+
+--usp_Prescription_GetBYId
 
 
 
