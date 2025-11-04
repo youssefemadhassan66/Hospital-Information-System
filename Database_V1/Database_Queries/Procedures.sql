@@ -1902,6 +1902,9 @@ GO
 -- =============================================
 -- APPOINTMENT SCHEDULING PROCEDURES
 -- =============================================
+
+
+-- Create Appintment
 CREATE OR ALTER PROCEDURE Create_Appointment 
 @PatientID INT, @PhysicianID INT , @AppointmentDateTime DATETIME , @DepartmentID INT,
 @Status NVARCHAR(20),@Duration INT,@Priority NVARCHAR(30),@Complaint NVARCHAR(30)
@@ -1985,9 +1988,9 @@ CREATE OR ALTER PROCEDURE Create_Appointment
 
 GO
 
-
-CREATE PROCEDURE Update_Appointment @AppintmentID int,
-@PatientID INT =NULL, @PhysicianID INT =NULL , @AppointmentDateTime DATETIME , @DepartmentID INT=NULL,
+--Update_Appointment
+CREATE PROCEDURE Update_Appointment 
+@AppintmentID int,@PatientID INT =NULL, @PhysicianID INT =NULL , @AppointmentDateTime DATETIME , @DepartmentID INT=NULL,
 @Status NVARCHAR(20)=NULL,@Duration INT=NULL,@Priority NVARCHAR(30) = NULL,@Complaint NVARCHAR(30) = NULL
    
     AS BEGIN 
@@ -2179,7 +2182,7 @@ BEGIN
         FROM Scheduling.Appointments 
         WHERE AppointmentID = @AppointmentID;
 
-        -- Validation
+       
         IF @CurrentStatus IS NULL
             THROW 50001, 'Appointment not found', 1;
 
@@ -2263,6 +2266,36 @@ BEGIN
 END;
 GO
 
+use HIS_V1
+go
+
+-- Get Doctor appointement
+Create PROCEDURE Get_Appointments_Doctors @DoctorID int ,@Appointment_Date Date 
+    AS BEGIN
+    SET NOCOUNT ON 
+        Select 
+           ap.AppointmentId,
+            ap.AppointmentDateTime,
+            ap.Status,
+            ap.Priority,
+            ap.Duration,
+            ap.Complaint,
+            p.PatientID,
+            p.FirstName + ' ' + p.LastName AS PatientName,
+            p.Gender,
+            p.Age,
+            p.PhoneNumber,
+            p.EMail AS Email,
+            st.StaffID AS DoctorID,
+            st.FullName AS DoctorName,
+            st.Position 
+        from Scheduling.Appointments ap 
+        join Core_system.staff st 
+        on ap.PhysicianID = st.StaffID join Patient_Management.patient p on ap.PatientID = p.PatientID 
+        where CAST(ap.AppointmentDateTime AS DATE) = @Appointment_Date  AND (@DoctorID IS NULL OR ap.PhysicianID = @DoctorID)
+        order by ap.AppointmentDateTime ASC
+    END
+GO
 --Get_Appointment_Details
 CREATE OR ALTER PROCEDURE Get_Appointment_Details
     @AppointmentID INT = NULL,
@@ -2290,8 +2323,8 @@ BEGIN
         a.AppointmentDateTime,
         a.Status,
         a.Duration,
-        a.Priority,
         a.Complaint,
+        a.Priority,
         a.CreatedAt,
         CASE 
             WHEN a.AppointmentDateTime < GETDATE() AND a.Status IN ('Scheduled', 'Confirmed') THEN 'Missed'
@@ -3257,7 +3290,7 @@ END;
 GO
 
 
-CREATE OR ALTER PROCEDURE Clinical_Management.UpdateVitalSigns
+CREATE OR ALTER PROCEDURE UpdateVitalSigns
     @VitalSignId INT,
     @Temperature DECIMAL(4,2) = NULL,
     @BloodPressure NVARCHAR(20) = NULL,
@@ -3325,6 +3358,8 @@ BEGIN
 END;
 GO
 
+
+
 CREATE OR ALTER PROCEDURE GetPatientVitalSignsHistory
     @PatientId INT,
     @DaysBack INT = 30
@@ -3373,7 +3408,7 @@ END;
 GO
 
 
-
+ GO 
 CREATE OR ALTER PROCEDURE DeleteVitalSigns
     @VitalSignId INT,
     @DeletedBy INT,
@@ -3390,26 +3425,25 @@ BEGIN
         IF @VitalSignId IS NULL OR @DeletedBy IS NULL
             THROW 50001, 'VitalSignId and DeletedBy are required', 1;
 
-        -- Validate vital signs record exists
+       
         IF NOT EXISTS (SELECT 1 FROM Clinical_Management.VitalSigns WHERE VitalSignId = @VitalSignId)
             THROW 50002, 'Vital signs record not found', 1;
 
-        -- Validate staff has permission
+        
         IF NOT EXISTS (
             SELECT 1 FROM Core_system.Staff 
             WHERE StaffId = @DeletedBy AND IsActive = 1
         )
             THROW 50003, 'Staff not authorized to delete vital signs', 1;
 
-        -- Check if encounter is still active (prevent deletion of active encounter vitals)
-        IF EXISTS (
+          IF EXISTS (
             SELECT 1 FROM Clinical_Management.VitalSigns vs
             INNER JOIN Clinical_Management.Encounters e ON vs.EncounterId = e.EncounterId
             WHERE vs.VitalSignId = @VitalSignId AND e.Status = 'Active'
         )
             THROW 50004, 'Cannot delete vital signs for active encounter', 1;
 
-        -- Delete the record
+        
         DELETE FROM Clinical_Management.VitalSigns 
         WHERE VitalSignId = @VitalSignId;
 
@@ -3426,7 +3460,387 @@ BEGIN
         THROW 50000, @ErrorMessage, 1;
     END CATCH
 END;
+
+
+
+-- =============================================
+-- Clinical_Management.Dignosis PROCEDURES
+-- =============================================
+
 GO
+CREATE PROCEDURE Create_Dignosis 
+@EncounterId INT, @PatientId INT , @DiagnosisCode NVARCHAR(20) ,  
+@DiagnosisDescription Nvarchar(500) ,@DiagnosisType Nvarchar(50),
+@Status Nvarchar(40) , @DiagnosedBy INT,
+@Notes NVARCHAR(1000)
+ AS BEGIN
+    
+ BEGIN TRY
+ 
+   BEGIN TRANSACTION
+
+   IF @EncounterId IS NULL OR @DiagnosedBy IS NULL OR @PatientId IS NULL 
+        THROW 50001,'Encounter ID And Doctor id and patient id are required ',1;
+   
+   IF @DiagnosisDescription IS NULL OR @DiagnosisType IS NULL 
+         THROW 50001,'Dignose Type and Description are required ',1;
+
+
+      IF NOT EXISTS (
+            SELECT 1 
+            FROM Clinical_Management.Encounters 
+            WHERE EncounterId = @EncounterId 
+            AND PatientId = @PatientId
+        )
+            THROW 50004, 'Encounter not found or does not belong to the specified patient', 1;
+
+        
+        IF NOT EXISTS (
+            SELECT 1 
+            FROM Patient_Management.Patient 
+            WHERE PatientId = @PatientId 
+            AND IsActive = 1
+        )
+            THROW 50005, 'Patient not found or inactive', 1;
+
+        
+        IF NOT EXISTS (
+            SELECT 1 
+            FROM Core_system.Staff s 
+            INNER JOIN Core_system.Users u ON s.UserID = u.UserID
+            WHERE s.StaffId = @DiagnosedBy 
+            AND s.IsActive = 1
+            AND u.RoleID IN (
+                SELECT RoleID 
+                FROM Core_system.Roles 
+                WHERE RoleName IN ('Doctor', 'Physician', 'Surgeon', 'Resident')
+            )
+        )
+        THROW 50006, 'Diagnosing staff must be an active medical doctor', 1;
+
+     INSERT INTO Clinical_Management.Diagnoses(
+            EncounterId,
+            PatientId,
+            DiagnosisCode,
+            DiagnosisDescription,
+            DiagnosisType,
+            Status,
+            DiagnosedBy,
+            Notes
+        )
+        VALUES(
+            @EncounterId,
+            @PatientId,
+            @DiagnosisCode,
+            @DiagnosisDescription,
+            @DiagnosisType,
+            @Status,
+            @DiagnosedBy,
+            @Notes
+        );
+        COMMIT TRANSACTION
+    END TRY
+    BEGIN CATCH
+     IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @ErrorMessage NVARCHAR(4000) = 'Error inserting Dignoses: ' + ERROR_MESSAGE();
+        THROW 50000, @ErrorMessage, 1;
+    END CATCH
+
+    END
+GO
+
+
+GO 
+--Upate_Dignoses
+
+CREATE PROCEDURE Update_Digonoses
+    @DignosisId INT, @EncounterId INT = NULL, @PatientId INT = NULL , @DiagnosisCode NVARCHAR(20)= NULL ,  
+    @DiagnosisDescription Nvarchar(500)= NULL ,@DiagnosisType Nvarchar(50)= NULL,
+    @Status Nvarchar(40)= NULL , @DiagnosedBy INT = NULL,
+    @Notes NVARCHAR(1000)= NULL 
+    AS BEGIN 
+    BEGIN TRY
+        BEGIN TRANSACTION
+        IF @DignosisId IS NULL
+            THROW 50001, 'Diagnoses ID is required', 1;
+
+      IF NOT EXISTS (
+            SELECT 1 
+            FROM Clinical_Management.Encounters 
+            WHERE EncounterId = @EncounterId 
+            AND PatientId = @PatientId
+        )
+            THROW 50004, 'Encounter not found or does not belong to the specified patient', 1;
+
+        
+        IF NOT EXISTS (
+            SELECT 1 
+            FROM Patient_Management.Patient 
+            WHERE PatientId = @PatientId 
+            AND IsActive = 1
+        )
+            THROW 50005, 'Patient not found or inactive', 1;
+
+        
+        IF NOT EXISTS (
+            SELECT 1 
+            FROM Core_system.Staff s 
+            INNER JOIN Core_system.Users u ON s.UserID = u.UserID
+            WHERE s.StaffId = @DiagnosedBy 
+            AND s.IsActive = 1
+            AND u.RoleID IN (
+                SELECT RoleID 
+                FROM Core_system.Roles 
+                WHERE RoleName IN ('Doctor', 'Physician', 'Surgeon', 'Resident')
+            )
+        )
+        THROW 50006, 'Diagnosing staff must be an active medical doctor', 1;
+
+        update Clinical_Management.Diagnoses 
+        SET  EncounterId = COALESCE(@EncounterId, EncounterId),
+        PatientId = COALESCE(@PatientId, PatientId),
+        DiagnosisCode = COALESCE(@DiagnosisCode, DiagnosisCode),
+        DiagnosisDescription = COALESCE(@DiagnosisDescription, DiagnosisDescription),
+        DiagnosisType = COALESCE(@DiagnosisType, DiagnosisType),
+        Status = COALESCE(@status, Status),
+        DiagnosedBy = COALESCE(@DiagnosedBy, DiagnosedBy),
+        Notes = COALESCE(@Notes, Notes)   
+        WHERE DiagnosisId = @DignosisId;
+
+         COMMIT TRANSACTION 
+     END TRY 
+     BEGIN CATCH 
+         DECLARE @ErrorMessage NVARCHAR(4000) = 'Error upadating Dignoses: ' + ERROR_MESSAGE();
+        THROW 50000, @ErrorMessage, 1;
+     END CATCH
+     END
+ GO
+
+
+ Go
+ --usp_Diagnosis_GetByPatient
+
+CREATE PROCEDURE GetByPatient_Dignosis @patientID INT 
+   AS BEGIN 
+   SET NOCOUNT ON 
+   BEGIN TRY
+
+   IF @patientID IS NULL 
+    THROW 50001,'Patient id is required',1;
+
+    IF NOT EXISTS( 
+                    SELECT 1 FROM Patient_Management.Patient 
+                    WHERE PatientID = @patientID AND IsActive != 0
+                 )
+                 THROW 50002,'Patient id Does not exist or is not active',1;
+
+
+   SELECT  
+           Di.EncounterId,
+           Di.PatientId,
+           Di.DiagnosisCode,
+           Di.DiagnosisDescription,
+           Di.DiagnosisType,
+           Di.Status,
+           Di.DiagnosedBy,
+           Di.Notes,
+           pa.FirstName + ' '+ pa.LastName as Patient_name,
+           Pa.MRN,
+           Pa.Age,
+           Pa.Gender
+     FROM Clinical_Management.Diagnoses Di 
+     join Patient_Management.Patient Pa on Di.PatientId = Pa.PatientID
+     WHERE Di.PatientId = @patientID 
+    ORDER BY Di.DiagnosisDate
+    END TRY
+       BEGIN CATCH 
+         DECLARE @ErrorMessage NVARCHAR(4000) = 'Error Fetching Dignoses: ' + ERROR_MESSAGE();
+        THROW 50000, @ErrorMessage, 1;
+     END CATCH
+
+
+   END
+GO
+-- Get Dignoses by encounter 
+CREATE PROCEDURE GetByEncounter_Dignosis @EncounterId INT 
+ AS BEGIN 
+   SET NOCOUNT ON 
+   BEGIN TRY
+
+   IF @EncounterId IS NULL 
+    THROW 50001,'EncounterId is required',1;
+
+    IF NOT EXISTS( 
+                    SELECT 1 FROM Clinical_Management.Encounters 
+                    WHERE EncounterId = @EncounterId 
+                 )
+                 THROW 50002,'Encounter id Does not exist ',1;
+
+
+   SELECT  
+           Di.EncounterId,
+           Di.PatientId,
+           Di.DiagnosisCode,
+           Di.DiagnosisDescription,
+           Di.DiagnosisType,
+           Di.Status,
+           Di.DiagnosedBy,
+           Di.Notes,
+           En.EncounterDate,
+           En.FollowUpInstructions,
+           En.VisitType,
+           En.EncounterNumber,
+           pa.FirstName + ' '+ pa.LastName as Patient_name,
+           Pa.MRN,
+           Pa.Age,
+           Pa.Gender
+     FROM Clinical_Management.Diagnoses Di 
+     join Patient_Management.Patient Pa on Di.PatientId = Pa.PatientID
+     join Clinical_Management.Encounters En on En.EncounterId = Di.EncounterId 
+     WHERE En.EncounterId = @EncounterId 
+    ORDER BY En.EncounterDate, Di.DiagnosisDate
+ END TRY   
+ BEGIN CATCH 
+         DECLARE @ErrorMessage NVARCHAR(4000) = 'Error Fetching Dignoses: ' + ERROR_MESSAGE();
+        THROW 50000, @ErrorMessage, 1;
+ END CATCH
+
+ END
+GO
+
+-- Get Dignoses by ID 
+CREATE PROCEDURE GetByID_Dignosis @DignosId INT 
+ AS BEGIN 
+   SET NOCOUNT ON 
+   BEGIN TRY
+
+   IF @DignosId IS NULL 
+    THROW 50001,'DignosId  id is required',1;
+
+    IF NOT EXISTS( 
+                    SELECT 1 FROM Clinical_Management.Diagnoses 
+                    WHERE DiagnosisId = @DignosId 
+                 )
+                 THROW 50002,'@DignosId Does not exist ',1;
+
+
+   SELECT  
+           Di.EncounterId,
+           Di.PatientId,
+           Di.DiagnosisCode,
+           Di.DiagnosisDescription,
+           Di.DiagnosisType,
+           Di.Status,
+           Di.DiagnosedBy,
+           Di.Notes
+     FROM Clinical_Management.Diagnoses Di 
+     WHERE Di.DiagnosisId= @DignosId
+     ORDER BY Di.DiagnosisDate
+ END TRY   
+ BEGIN CATCH 
+         DECLARE @ErrorMessage NVARCHAR(4000) = 'Error Fetching Dignoses: ' + ERROR_MESSAGE();
+        THROW 50000, @ErrorMessage, 1;
+ END CATCH
+
+ END
+GO
+
+
+
+-- Delete Dignoses by ID 
+CREATE PROCEDURE Delete_Dignosis @DignosId INT 
+ AS BEGIN 
+   SET NOCOUNT ON 
+   BEGIN TRY
+
+   BEGIN TRANSACTION
+
+   IF @DignosId IS NULL 
+    THROW 50001,'DignosId  id is required',1;
+
+    IF NOT EXISTS( 
+                    SELECT 1 FROM Clinical_Management.Diagnoses 
+                    WHERE DiagnosisId = @DignosId 
+                 )
+                 THROW 50002,'@DignosId Does not exist ',1;
+
+
+   DELETE  FROM Clinical_Management.Diagnoses  
+   WHERE DiagnosisId= @DignosId
+ 
+
+     COMMIT TRANSACTION
+
+ END TRY   
+ BEGIN CATCH 
+    IF @@TRANCOUNT > 0 
+        ROLLBACK TRANSACTION;
+
+    DECLARE @ErrorMessage NVARCHAR(4000) = 'Error Deleting Dignoses: ' + ERROR_MESSAGE();
+    THROW 50000, @ErrorMessage, 1;
+ END CATCH
+
+ END
+GO
+
+-- =============================================
+-- Clinical_Management.Prescription PROCEDURES
+-- =============================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 --CREATE PROCEDURE Emergency_ToggleAvailability
 --    @DoctorID INT,
@@ -3484,4 +3898,126 @@ GO
 --        THROW;
 --    END CATCH;
 --END
+--GO
+--CREATE OR ALTER PROCEDURE Get_DoctorAppointments_Detailed
+--    @DoctorID INT = NULL,
+--    @AppointmentDate DATE = NULL,
+--    @IncludePastAppointments BIT = 0
+--AS 
+--BEGIN
+--    SET NOCOUNT ON;
+    
+--    BEGIN TRY
+--        -- Set defaults
+--        IF @AppointmentDate IS NULL
+--            SET @AppointmentDate = CAST(GETDATE() AS DATE);
+        
+--        -- If no doctor specified, return all doctors' appointments (for admin view)
+--        IF @DoctorID IS NOT NULL
+--        BEGIN
+--            -- Validate doctor exists
+--            IF NOT EXISTS (
+--                SELECT 1 
+--                FROM Core_system.Staff 
+--                WHERE StaffID = @DoctorID 
+--                AND IsActive = 1
+--            )
+--                THROW 50001, 'Doctor not found or inactive', 1;
+--        END
+        
+--        SELECT 
+--            -- Appointment Details
+--            ap.AppointmentId,
+--            ap.AppointmentDateTime,
+--            ap.Status,
+--            ap.Priority,
+--            ap.Duration,
+--            ap.Complaint,
+            
+--            -- Patient Details
+--            p.PatientID,
+--            p.FirstName + ' ' + p.LastName AS PatientName,
+--            p.Gender,
+--            DATEDIFF(YEAR, p.DateOfBirth, GETDATE()) AS Age,
+--            p.PhoneNumber,
+--            p.EMail AS Email,
+            
+--            -- Doctor Details
+--            st.StaffID AS DoctorID,
+--            st.FullName AS DoctorName,
+--            st.Position,
+            
+--            -- Department
+--            d.DepartmentName,
+            
+--            -- Calculated Fields
+--            CASE 
+--                WHEN ap.AppointmentDateTime > GETDATE() THEN 'Upcoming'
+--                WHEN ap.AppointmentDateTime <= GETDATE() AND ap.Status IN ('Scheduled', 'Confirmed') THEN 'Missed'
+--                ELSE 'Completed'
+--            END AS AppointmentStatus,
+            
+--            DATEDIFF(MINUTE, GETDATE(), ap.AppointmentDateTime) AS MinutesUntilAppointment,
+            
+--            -- Queue Information
+--            pq.QueueNumber,
+--            pq.Status AS QueueStatus,
+--            pq.CurrentPosition,
+            
+--            -- Emergency contact (if exists)
+--            ec.FullName AS EmergencyContact,
+--            ec.PhoneNumber AS EmergencyPhone
+            
+--        FROM Scheduling.Appointments ap 
+--        INNER JOIN Patient_Management.Patient p ON ap.PatientID = p.PatientID 
+--        INNER JOIN Core_system.Staff st ON ap.PhysicianID = st.StaffID 
+--        INNER JOIN Clinical_Management.Departments d ON ap.DepartmentID = d.DepartmentID
+--        LEFT JOIN Clinical_Management.PatientQueue pq ON ap.AppointmentID = pq.AppointmentID 
+--            AND pq.QueueDate = @AppointmentDate
+--        LEFT JOIN Patient_Management.EmergencyContacts ec ON p.PatientID = ec.PatientID 
+--            AND ec.IsPrimary = 1
+        
+--        WHERE 
+--            -- Doctor filter (if provided)
+--            (@DoctorID IS NULL OR ap.PhysicianID = @DoctorID)
+--            -- Date filter
+--            AND CAST(ap.AppointmentDateTime AS DATE) = @AppointmentDate
+--            -- Status filter (include past appointments if requested)
+--            AND (
+--                @IncludePastAppointments = 1 
+--                OR ap.Status IN ('Scheduled', 'Confirmed', 'In Progress')
+--                OR (ap.AppointmentDateTime >= GETDATE())
+--            )
+        
+--        ORDER BY 
+--            ap.AppointmentDateTime ASC,
+--            CASE ap.Priority
+--                WHEN 'Urgent' THEN 1
+--                WHEN 'High' THEN 2
+--                WHEN 'Normal' THEN 3
+--                WHEN 'Low' THEN 4
+--                ELSE 5
+--            END;
+        
+--        -- Return summary statistics
+--        SELECT 
+--            COUNT(*) AS TotalAppointments,
+--            SUM(CASE WHEN ap.Status = 'Scheduled' THEN 1 ELSE 0 END) AS ScheduledCount,
+--            SUM(CASE WHEN ap.Status = 'Confirmed' THEN 1 ELSE 0 END) AS ConfirmedCount,
+--            SUM(CASE WHEN ap.Status = 'In Progress' THEN 1 ELSE 0 END) AS InProgressCount,
+--            SUM(CASE WHEN pq.QueueID IS NOT NULL THEN 1 ELSE 0 END) AS CheckedInCount
+--        FROM Scheduling.Appointments ap
+--        LEFT JOIN Clinical_Management.PatientQueue pq ON ap.AppointmentID = pq.AppointmentID 
+--            AND pq.QueueDate = @AppointmentDate
+--        WHERE 
+--            (@DoctorID IS NULL OR ap.PhysicianID = @DoctorID)
+--            AND CAST(ap.AppointmentDateTime AS DATE) = @AppointmentDate
+--            AND (@IncludePastAppointments = 1 OR ap.Status IN ('Scheduled', 'Confirmed', 'In Progress'));
+            
+--    END TRY
+--    BEGIN CATCH
+--        DECLARE @ErrorMessage NVARCHAR(4000) = 'Error retrieving doctor appointments: ' + ERROR_MESSAGE();
+--        THROW 50000, @ErrorMessage, 1;
+--    END CATCH
+--END;
 --GO

@@ -86,6 +86,7 @@ BEGIN
 END;
 GO
 
+
 -- Audit trigger for Patient table
 CREATE TRIGGER TR_Patient_Audit
 ON Patient_Management.Patient

@@ -112,3 +112,6 @@ go
 use HIS_V1
 ALTER TABLE Clinical_Management.EncountersADD CONSTRAINT FK_Queue_Encounters FOREIGN KEY (QueueId)REFERENCES Clinical_Management.PatientQueue(QueueID);
 
+use HIS_V1 
+ALTER TABLE Clinical_Management.Encounters
+ADD ChiefComplaint NVARCHAR(500)  NULL 
