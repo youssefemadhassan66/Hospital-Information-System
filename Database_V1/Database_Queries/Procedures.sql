@@ -4423,14 +4423,13 @@ CREATE PROCEDURE Create_Admission
     @AdmissionDate DATETIME2,
     @AdmittedFrom NVARCHAR(50),
     @BedID INT,
-    @AdmissionReason NVARCHAR(500),
-    @CreatedBy INT
+    @AdmissionReason NVARCHAR(500)
 AS BEGIN
     SET NOCOUNT ON
     BEGIN TRY
         BEGIN TRANSACTION
 
-        IF @PatientId IS NULL OR @AdmittingPhysicianID IS NULL OR @BedID IS NULL OR @CreatedBy IS NULL
+        IF @PatientId IS NULL OR @AdmittingPhysicianID IS NULL OR @BedID IS NULL 
             THROW 50001, 'Patient, Physician, Bed and Created By are required', 1;
 
         IF NOT EXISTS (SELECT 1 FROM Patient_Management.Patient WHERE PatientId = @PatientId AND IsActive = 1)
@@ -4448,12 +4447,12 @@ AS BEGIN
 
         INSERT INTO Inpatient_Management.Admissions (
             PatientId, EncounterId, AdmittingPhysicianID, AdmissionDate, 
-            AdmittedFrom, BedID, AdmissionReason, CreatedBy
+            AdmittedFrom, BedID, AdmissionReason
         )
         VALUES (
             @PatientId, @EncounterId, @AdmittingPhysicianID, @AdmissionDate,
-            @AdmittedFrom, @BedID, @AdmissionReason, @CreatedBy
-        );
+            @AdmittedFrom, @BedID, @AdmissionReason  
+            );
 
         UPDATE Inpatient_Management.Beds SET BedStatus = 'Occupied' WHERE BedID = @BedID;
 
@@ -4466,7 +4465,7 @@ AS BEGIN
     END CATCH
 END
 GO
-
+--Discharge_Patient
 CREATE PROCEDURE Discharge_Patient
     @AdmissionId INT,
     @DischargeDate DATETIME2
@@ -4547,6 +4546,12 @@ CREATE PROCEDURE GetbyId_Amission @AdmissionId INT
 AS BEGIN
     SET NOCOUNT ON
     BEGIN TRY
+       
+       
+       IF @AdmissionId IS NULL
+        THROW 50001, 'Admission ID is required',1;
+        
+
         SELECT 
             a.AdmissionId,
             a.PatientId,
@@ -4577,30 +4582,548 @@ AS BEGIN
     END CATCH
 END
 GO
+--USP-GetPatient_AdmissionHistory
+CREATE PROCEDURE GetPatient_AdmissionHistory
+    @PatientId INT
+AS BEGIN
+    SET NOCOUNT ON
+    BEGIN TRY
+        IF @PatientId IS NULL
+            THROW 50001, 'Patient ID is required', 1;
+
+        SELECT 
+            a.AdmissionId,
+            a.PatientId,
+            a.EncounterId,
+            a.AdmittingPhysicianID,
+            a.AdmissionDate,
+            a.DischargeDate,
+            a.AdmittedFrom,
+            a.BedID,
+            a.AdmissionReason,
+            a.Status,
+            a.TotalCharges,
+            p.FirstName + ' ' + p.LastName AS PatientName,
+            p.MRN,
+            s.FullName AS PhysicianName,
+            b.WardID,
+            b.BedNumber
+        FROM Inpatient_Management.Admissions a
+        INNER JOIN Patient_Management.Patient p ON a.PatientId = p.PatientID
+        INNER JOIN Core_system.Staff s ON a.AdmittingPhysicianID = s.StaffId
+        INNER JOIN Inpatient_Management.Beds b ON a.BedID = b.BedID
+        WHERE a.PatientId = @PatientId
+        ORDER BY a.AdmissionDate DESC;
+    END TRY
+    BEGIN CATCH
+        DECLARE @Error NVARCHAR(4000) = 'Error fetching patient admission history: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
+-- Update Admission 
+CREATE PROCEDURE Update_Admission
+    @AdmissionId INT,
+    @DischargeDate DATETIME2 = NULL,
+    @AdmissionDate DATETIME2 = NULL,
+    @PatientId INT = NULL,
+    @EncounterId INT = NULL,
+    @AdmittingPhysicianID INT = NULL,
+    @AdmittedFrom NVARCHAR(50) = NULL,
+    @BedID INT = NULL,
+    @AdmissionReason NVARCHAR(500) = NULL,
+    @Status NVARCHAR(100) = NULL
+AS BEGIN
+    SET NOCOUNT ON
+    BEGIN TRY
+        BEGIN TRANSACTION
+
+        IF @AdmissionId IS NULL 
+            THROW 50001, 'Admission ID is required', 1;
+
+        DECLARE @CurrentBedID INT, @CurrentStatus NVARCHAR(20);
+        SELECT @CurrentBedID = BedID, @CurrentStatus = Status 
+        FROM Inpatient_Management.Admissions 
+        WHERE AdmissionId = @AdmissionId;
+
+        IF @CurrentBedID IS NULL
+            THROW 50002, 'Admission not found', 1;
+
+        IF @PatientId IS NOT NULL 
+            AND NOT EXISTS (SELECT 1 FROM Patient_Management.Patient WHERE PatientId = @PatientId AND IsActive = 1)
+            THROW 50003, 'Patient not found or inactive', 1;
+
+        IF @EncounterId IS NOT NULL 
+            AND NOT EXISTS (SELECT 1 FROM Clinical_Management.Encounters WHERE EncounterId = @EncounterId)
+            THROW 50004, 'Encounter not found', 1;
+
+        IF @AdmittingPhysicianID IS NOT NULL 
+            AND NOT EXISTS (SELECT 1 FROM Core_system.Staff WHERE StaffId = @AdmittingPhysicianID AND IsActive = 1)
+            THROW 50005, 'Admitting physician not found or inactive', 1;
+
+        IF @BedID IS NOT NULL AND @BedID != @CurrentBedID
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM Inpatient_Management.Beds WHERE BedID = @BedID AND BedStatus = 'Available')
+                THROW 50006, 'New bed not available', 1;
+
+            UPDATE Inpatient_Management.Beds SET BedStatus = 'Available' WHERE BedID = @CurrentBedID;
+            UPDATE Inpatient_Management.Beds SET BedStatus = 'Occupied' WHERE BedID = @BedID;
+
+            INSERT INTO Inpatient_Management.BedTransfers (AdmissionId, FromBedId, ToBedId, OrderedBy)
+            VALUES (@AdmissionId, @CurrentBedID, @BedID, @AdmittingPhysicianID);
+        END
+
+        IF @Status IS NOT NULL AND @Status = 'Discharged' AND @CurrentStatus != 'Discharged'
+        BEGIN
+            IF @DischargeDate IS NULL
+                SET @DischargeDate = GETDATE();
+                
+            UPDATE Inpatient_Management.Beds SET BedStatus = 'Available' WHERE BedID = COALESCE(@BedID, @CurrentBedID);
+        END
+
+        UPDATE Inpatient_Management.Admissions 
+        SET AdmissionDate = COALESCE(@AdmissionDate, AdmissionDate),
+            DischargeDate = COALESCE(@DischargeDate, DischargeDate),
+            PatientId = COALESCE(@PatientId, PatientId),
+            EncounterId = COALESCE(@EncounterId, EncounterId),
+            AdmittingPhysicianID = COALESCE(@AdmittingPhysicianID, AdmittingPhysicianID),
+            AdmittedFrom = COALESCE(@AdmittedFrom, AdmittedFrom),
+            AdmissionReason = COALESCE(@AdmissionReason, AdmissionReason),
+            BedID = COALESCE(@BedID, BedID),
+            Status = COALESCE(@Status, Status)
+        WHERE AdmissionId = @AdmissionId;
+
+        COMMIT TRANSACTION
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 ROLLBACK TRANSACTION;
+        DECLARE @Error NVARCHAR(4000) = 'Error updating admission: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
+
+-- Delete Patient 
+CREATE PROCEDURE Delete_Admission @AdmissionId INT
+AS BEGIN 
+    SET NOCOUNT ON 
+    BEGIN TRY
+        BEGIN TRANSACTION
+
+        IF @AdmissionId IS NULL 
+            THROW 50001,'Admission Id is required',1;
+
+        DECLARE @CurrentBedID INT, @CurrentStatus NVARCHAR(60)
+
+        SELECT 
+            @CurrentBedID = BedID,
+            @CurrentStatus = Status
+        FROM Inpatient_Management.Admissions 
+        WHERE AdmissionId = @AdmissionId;
+
+        IF @CurrentBedID IS NULL
+            THROW 50002,'Admission not found',1;
+
+        IF @CurrentStatus = 'Active'
+            THROW 50003,'Cannot delete active admission. Discharge patient first.',1;
+
+        UPDATE Inpatient_Management.Beds 
+        SET BedStatus = 'Available' 
+        WHERE BedID = @CurrentBedID;
+
+        DELETE FROM Inpatient_Management.Admissions
+        WHERE AdmissionId = @AdmissionId;
+
+        COMMIT TRANSACTION
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 
+            ROLLBACK TRANSACTION;
+        DECLARE @Error NVARCHAR(4000) = 'Error deleting admission: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
+-- =============================================
+-- INPATIENT MANAGEMENT Wards
+-- =============================================
+
+
+  CREATE PROCEDURE Create_Ward 
+    @WardName NVARCHAR(100) NOT NULL,
+    @DepartmentID INT NULL,
+    @WardType NVARCHAR(50)
+    AS BEGIN 
+    SET NOCOUNT ON 
+    BEGIN TRY
+        BEGIN TRANSACTION
+
+        IF @WardName IS NULL OR LEN(@WardName) < 1
+            THROW 50001,'Proper Ward name is Required',1;
+
+        IF NOT EXISTS (
+        SELECT 1 FROM Core_system.Departments
+        WHERE DepartmentID = @DepartmentID
+        )
+        THROW 50002,'Department is not found',1;
+
+        IF @WardType  NOT IN ('General','Single','Semi-Private','Gold','Diamond','VIP','Maternity')
+             THROW 50002,'Ward type should be only  ( General, Single ,Semi-Private,Gold,Diamond ,Vip ,Maternity )  ',1;
+
+        INSERT INTO Inpatient_Management.Wards(
+        WardName,
+        DepartmentID,
+        WardType,
+        IsActive
+        )
+        VALUES(
+        @WardName,
+        @DepartmentID,
+        @WardType,
+        1
+        )
+
+        COMMIT TRANSACTION
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 
+            ROLLBACK TRANSACTION;
+        DECLARE @Error NVARCHAR(4000) = 'Error Creating Ward ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+
+GO
+
+GO
+ CREATE PROCEDURE Update_Ward
+    @WardID INT,
+    @WardName NVARCHAR(100) = NULL,
+    @DepartmentID INT = NULL,
+    @WardType NVARCHAR(50) = NULL,
+    @IsActive BIT = NULL
+AS BEGIN 
+    SET NOCOUNT ON 
+    BEGIN TRY
+        BEGIN TRANSACTION
+
+        IF @WardID IS NULL
+            THROW 50001,'Ward ID is required',1;
+
+        IF NOT EXISTS (SELECT 1 FROM Inpatient_Management.Wards WHERE WardID = @WardID)
+            THROW 50002,'Ward not found',1;
+
+        IF @WardName IS NOT NULL AND LEN(@WardName) < 1
+            THROW 50003,'Proper Ward name is required',1;
+
+        IF @DepartmentID IS NOT NULL AND NOT EXISTS (SELECT 1 FROM Core_system.Departments WHERE DepartmentID = @DepartmentID)
+            THROW 50004,'Department not found',1;
+
+        IF @WardType IS NOT NULL AND @WardType NOT IN ('General','Single','Semi-Private','Gold','Diamond','VIP','Maternity')
+            THROW 50005,'Ward type should be only (General, Single, Semi-Private, Gold, Diamond, VIP, Maternity)',1;
+
+        UPDATE Inpatient_Management.Wards
+        SET WardName = COALESCE(@WardName, WardName),
+            DepartmentID = COALESCE(@DepartmentID, DepartmentID),
+            WardType = COALESCE(@WardType, WardType),
+            IsActive = COALESCE(@IsActive, IsActive)
+        WHERE WardID = @WardID;
+
+        COMMIT TRANSACTION
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 
+            ROLLBACK TRANSACTION;
+        DECLARE @Error NVARCHAR(4000) = 'Error updating ward: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
+GO
+CREATE PROCEDURE Delete_Ward
+    @WardID INT
+AS BEGIN 
+    SET NOCOUNT ON 
+    BEGIN TRY
+        BEGIN TRANSACTION
+
+        IF @WardID IS NULL
+            THROW 50001,'Ward ID is required',1;
+
+        IF NOT EXISTS (SELECT 1 FROM Inpatient_Management.Wards WHERE WardID = @WardID)
+            THROW 50002,'Ward not found',1;
+
+        IF EXISTS (SELECT 1 FROM Inpatient_Management.Beds WHERE WardID = @WardID AND BedStatus = 'Occupied')
+            THROW 50003,'Cannot delete ward with occupied beds',1;
+
+        IF EXISTS (SELECT 1 FROM Inpatient_Management.Admissions a 
+                   INNER JOIN Inpatient_Management.Beds b ON a.BedID = b.BedID 
+                   WHERE b.WardID = @WardID AND a.Status = 'Active')
+            THROW 50004,'Cannot delete ward with active admissions',1;
+
+        DELETE FROM Inpatient_Management.Beds WHERE WardID = @WardID;
+
+        DELETE FROM Inpatient_Management.Wards WHERE WardID = @WardID;
+
+        COMMIT TRANSACTION
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 
+            ROLLBACK TRANSACTION;
+        DECLARE @Error NVARCHAR(4000) = 'Error deleting ward: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
+
+--GetById_ward
+CREATE PROCEDURE GetById_Ward
+    @WardId INT
+AS 
+BEGIN
+    SET NOCOUNT ON 
+    BEGIN TRY
+    
+        IF @WardId IS NULL
+            THROW 50001, 'Ward ID is required', 1;
+
+    
+        IF NOT EXISTS (SELECT 1 FROM Inpatient_Management.Wards WHERE WardID = @WardId)
+            THROW 50002, 'Ward not found', 1;
+
+        SELECT
+            w.WardName,
+            w.WardType,
+            w.IsActive,
+            w.DepartmentID,
+            b.BedID,
+            b.BedStatus,
+            b.BedNumber
+        FROM 
+            Inpatient_Management.Wards w
+            INNER JOIN Inpatient_Management.Beds b ON w.WardID = b.WardID       
+        WHERE 
+            w.WardID = @WardId
+        ORDER BY 
+            b.BedNumber; 
+        
+    END TRY
+    BEGIN CATCH
+        DECLARE @Error NVARCHAR(4000) = 'Error Fetching ward: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+    END
+GO
+--GetWard_Summary
+GO
+CREATE PROCEDURE GetWard_Summary
+    @WardId int
+    AS BEGIN
+    SET NOCOUNT ON 
+    BEGIN TRY
+       SELECT
+                 w.WardName,
+                 w.WardType,
+                 COUNT(B.BedID) as Totla_BedCounts,
+                 SUM(CASE WHEN b.BedStatus = 'Available' THEN 1 ELSE 0 END)  AS AvailableBeds ,
+                 SUM(CASE WHEN B.BedStatus = 'Occupied' THEN 1 ELSE 0 END) AS  OccupiedBeds,
+                 COUNT(A.AdmissionId) AS ActiveAdmissions
+                     
+        FROM 
+        Inpatient_Management.Wards W
+        JOIN Inpatient_Management.Beds B ON W.WardID = B.WardID
+        LEFT JOIN Inpatient_Management.Admissions A ON A.BedID = B.BedID AND A.Status = 'Active'        
+        WHERE W.WardID = @WardId
+        GROUP BY w.WardName, w.WardType;
+    END TRY
+    BEGIN CATCH
+        DECLARE @Error NVARCHAR(4000) = 'Error Fetching ward: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+   END
+GO
+
+--UPS Search_Ward 
+CREATE PROCEDURE Search_Ward
+    @Search_Term NVARCHAR(80) = NULL
+AS 
+BEGIN
+    SET NOCOUNT ON 
+    BEGIN TRY
+        SELECT * FROM 
+        Inpatient_Management.Wards W
+        WHERE 
+        (@Search_Term IS NULL)
+        OR (W.WardName LIKE '%' + @Search_Term + '%') 
+        OR (W.WardType LIKE '%' + @Search_Term + '%')
+        OR (TRY_CONVERT(INT, @Search_Term) IS NOT NULL AND W.WardID = TRY_CONVERT(INT, @Search_Term))
+
+    END TRY
+    BEGIN CATCH
+        DECLARE @Error NVARCHAR(4000) = 'Error Fetching ward: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
 
 
 
+-- =============================================
+-- INPATIENT MANAGEMENT Beds
+-- =============================================
 
+CREATE PROCEDURE Create_Bed
+    @WardID INT,
+    @BedNumber NVARCHAR(10)
+AS BEGIN 
+    SET NOCOUNT ON 
+    BEGIN TRY
+        BEGIN TRANSACTION
 
+        IF @WardID IS NULL OR @BedNumber IS NULL
+            THROW 50001,'Ward ID and Bed Number are required',1;
 
+        IF NOT EXISTS (SELECT 1 FROM Inpatient_Management.Wards WHERE WardID = @WardID AND IsActive = 1)
+            THROW 50002,'Ward not found or inactive',1;
 
+        DECLARE @WardName NVARCHAR(100);
+        SELECT @WardName = WardName FROM Inpatient_Management.Wards WHERE WardID = @WardID;
 
+        DECLARE @FullBedNumber NVARCHAR(20) = UPPER(LEFT(@WardName, 3)) + '-' + @BedNumber;
 
+        IF EXISTS (SELECT 1 FROM Inpatient_Management.Beds WHERE WardID = @WardID AND BedNumber = @FullBedNumber)
+            THROW 50003,'Bed number already exists in this ward',1;
 
+        INSERT INTO Inpatient_Management.Beds(
+            WardID,
+            BedNumber,
+            BedStatus
+        )
+        VALUES(
+            @WardID,
+            @FullBedNumber,
+            'Available'
+        )
 
+        COMMIT TRANSACTION
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 
+            ROLLBACK TRANSACTION;
+        DECLARE @Error NVARCHAR(4000) = 'Error creating bed: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
 
+--usp Update_Bed
 
+CREATE PROCEDURE Update_Bed
+    @BedID INT,
+    @WardID INT = NULL,
+    @BedNumber NVARCHAR(10) = NULL,
+    @BedStatus NVARCHAR(20) = NULL
+AS BEGIN 
+    SET NOCOUNT ON 
+    BEGIN TRY
+        BEGIN TRANSACTION
 
+        IF @BedID IS NULL
+            THROW 50001,'Bed ID is required',1;
 
+        IF NOT EXISTS (SELECT 1 FROM Inpatient_Management.Beds WHERE BedID = @BedID)
+            THROW 50002,'Bed not found',1;
 
+        DECLARE @CurrentWardID INT;
+        SELECT @CurrentWardID = WardID FROM Inpatient_Management.Beds WHERE BedID = @BedID;
 
+        IF @WardID IS NOT NULL AND NOT EXISTS (SELECT 1 FROM Inpatient_Management.Wards WHERE WardID = @WardID AND IsActive = 1)
+            THROW 50003,'Ward not found or inactive',1;
 
+        DECLARE @TargetWardID INT = COALESCE(@WardID, @CurrentWardID);
+        DECLARE @WardName NVARCHAR(100);
+        SELECT @WardName = WardName FROM Inpatient_Management.Wards WHERE WardID = @TargetWardID;
 
+        DECLARE @FullBedNumber NVARCHAR(20);
+        IF @BedNumber IS NOT NULL
+            SET @FullBedNumber = UPPER(LEFT(@WardName, 3)) + '-' + @BedNumber;
 
+        IF @BedNumber IS NOT NULL AND EXISTS (SELECT 1 FROM Inpatient_Management.Beds WHERE WardID = @TargetWardID AND BedNumber = @FullBedNumber AND BedID != @BedID)
+            THROW 50004,'Bed number already exists in this ward',1;
 
+        IF @BedStatus IS NOT NULL AND @BedStatus NOT IN ('Available','Occupied','Cleaning','Blocked','Maintenance')
+            THROW 50005,'Invalid bed status',1;
 
+        UPDATE Inpatient_Management.Beds
+        SET WardID = COALESCE(@WardID, WardID),
+            BedNumber = COALESCE(@FullBedNumber, BedNumber),
+            BedStatus = COALESCE(@BedStatus, BedStatus)
+        WHERE BedID = @BedID;
 
+        COMMIT TRANSACTION
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 
+            ROLLBACK TRANSACTION;
+        DECLARE @Error NVARCHAR(4000) = 'Error updating bed: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
+--usp DeleteBed
+CREATE PROCEDURE Delete_Bed
+    @BedID INT
+AS BEGIN 
+    SET NOCOUNT ON 
+    BEGIN TRY
+        BEGIN TRANSACTION
 
+        IF @BedID IS NULL
+            THROW 50001,'Bed ID is required',1;
+
+        IF NOT EXISTS (SELECT 1 FROM Inpatient_Management.Beds WHERE BedID = @BedID)
+            THROW 50002,'Bed not found',1;
+
+        IF EXISTS (SELECT 1 FROM Inpatient_Management.Admissions WHERE BedID = @BedID AND Status = 'Active')
+            THROW 50003,'Cannot delete bed with active admission',1;
+
+        DELETE FROM Inpatient_Management.Beds WHERE BedID = @BedID;
+
+        COMMIT TRANSACTION
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 
+            ROLLBACK TRANSACTION;
+        DECLARE @Error NVARCHAR(4000) = 'Error deleting bed: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
+--GetAvailable_Beds
+CREATE PROCEDURE GetAvailable_Beds
+    @WardID INT = NULL
+AS BEGIN
+    SET NOCOUNT ON
+    BEGIN TRY
+        SELECT 
+            b.BedID,
+            b.BedNumber,
+            b.BedStatus,
+            w.WardName,
+            w.WardType
+        FROM Inpatient_Management.Beds b
+        INNER JOIN Inpatient_Management.Wards w ON b.WardID = w.WardID
+        WHERE b.BedStatus = 'Available'
+        AND w.IsActive = 1
+        AND (@WardID IS NULL OR b.WardID = @WardID)
+        ORDER BY w.WardName, b.BedNumber;
+    END TRY
+    BEGIN CATCH
+        DECLARE @Error NVARCHAR(4000) = 'Error fetching available beds: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
 
 
 
