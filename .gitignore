@@ -1,0 +1,20 @@
+# Visual Studio
+.vs/
+*.user
+*.userosscache
+*.sln.docstates
+
+# SQL Server
+*.mdf
+*.ldf
+*.ndf
+
+# Compiled source
+*.com
+*.class
+*.dll
+*.exe
+*.pdb
+
+# Logs
+*.log

@@ -83,7 +83,7 @@ As Begin
 		PRINT 'Specialization updated successfully';
 
 	END TRY
-	Begin CATCH
+	Begin CATCH+
 		Print 'Error in Specilization ' + Error_Message();
 		Throw;
 	END CATCH
@@ -173,17 +173,12 @@ CREATE PROCEDURE Search_Specilizations @SearchTerm NVARCHAR(100)
 		THROW;
 	END CATCH 
 	END
-
-
 GO
-
-
-
-
 
 ----------------------------
 -- Users Procedure
 ---------------------------
+
 GO
 Create Procedure Add_User @UserName Varchar(50) , @BrithDate DATETIME,@PasswordHash Nvarchar(250) ,@Email Nvarchar(150),@RoleID INT
 As Begin 
@@ -227,7 +222,6 @@ As Begin
 	END CATCH
 END
 
-
 GO
 
 Go 
@@ -261,6 +255,7 @@ Create Procedure Delete_User @User_ID INT
 	END
 	GO 
 
+
 GO
 CREATE PROCEDURE  UPDATE_USER @USERID INT ,@UserName Varchar(50) = NULL , @BrithDate DATETIME = NULL ,@Email Nvarchar(150) =NULL,@RoleID int = Null
 	AS BEGIN 
@@ -280,7 +275,7 @@ CREATE PROCEDURE  UPDATE_USER @USERID INT ,@UserName Varchar(50) = NULL , @Brith
 		UPDATE Core_system.Users 
 		SET UserName =  COALESCE(@UserName,UserName),
 		BrithDate = COALESCE (@BrithDate,BrithDate),
-		Email = COALESCE(Email,@Email),
+		Email = COALESCE(@Email,Email),
 		RoleID = COALESCE(@RoleID,RoleID)
 		where UserID = @USERID;
 
@@ -294,12 +289,7 @@ CREATE PROCEDURE  UPDATE_USER @USERID INT ,@UserName Varchar(50) = NULL , @Brith
 
 GO
 
-
 GO
-
-
-GO
-
 CREATE PROCEDURE Update_LastLoginAt_user @USERID INT
 	AS BEGIN
 	BEGIN TRY 
@@ -311,6 +301,7 @@ CREATE PROCEDURE Update_LastLoginAt_user @USERID INT
 	END TRY 
 	BEGIN CATCH
 	PRINT 'USER ERROR' + ERROR_MESSAGE();
+    THROW;       
 	END CATCH
 END
 
@@ -327,6 +318,7 @@ CREATE PROCEDURE Get_USER_ID @USERID INT
 	END TRY 
 	BEGIN CATCH
 	PRINT 'USER ERROR' + ERROR_MESSAGE();
+    THROW;
 	END CATCH
 	END
 
@@ -405,8 +397,6 @@ Create Procedure Update_Role
 		THROW;
 	END CATCH 
 	END
-
-
 GO
 CREATE PROCEDURE Get_all_ROLES
 	AS BEGIN 
@@ -422,9 +412,6 @@ CREATE PROCEDURE Get_all_ROLES
 	END CATCH
 	END
 GO
-
-
-
 CREATE PROCEDURE Delete_Role
     @RoleID INT
 AS BEGIN
@@ -478,7 +465,7 @@ SET NOCOUNT ON
 	IF EXISTS (SELECT 1 FROM Core_system.Users WHERE UserID = @USERID AND RoleID = @ROLEID)
             THROW 50004, 'User already has this role assigned', 1;
 	
-	INSERT INTO Core_system.Users (UserID, RoleID) VALUES (@USERID, @ROLEID)
+	UPDATE Core_system.Users SET RoleID = @ROLEID WHERE UserID = @USERID;
 
 END TRY
 BEGIN CATCH 
@@ -555,7 +542,7 @@ CREATE PROCEDURE ADD_Department @DepartmentName VARCHAR(50) , @DepartmentCode VA
 
 	END TRY
 	BEGIN CATCH 
-		 PRINT ERROR_MESSAGE();
+		 PRINT 'Error Creating Department' +  ERROR_MESSAGE();
 		THROW;
 	END CATCH
 END
@@ -5124,6 +5111,166 @@ AS BEGIN
     END CATCH
 END
 GO
+--usp Get
+CREATE PROCEDURE GetById_Bed
+    @BedId INT
+AS 
+BEGIN
+    SET NOCOUNT ON
+    BEGIN TRY
+        IF @BedId IS NULL
+            THROW 50001, 'Bed ID is required', 1;
+
+        SELECT 
+            b.BedID,
+            b.BedNumber,
+            b.BedStatus,
+            w.WardName,
+            w.WardType,
+            a.AdmissionDate,
+            a.AdmissionReason,
+            a.AdmittedFrom,
+            a.Status,
+            p.FirstName + ' ' + p.LastName AS Patient_Name,
+            p.MRN,
+            p.Age,
+            s.FullName,
+            s.Position
+        FROM Inpatient_Management.Beds b
+        INNER JOIN Inpatient_Management.Wards w ON b.WardID = w.WardID
+        LEFT JOIN Inpatient_Management.Admissions a ON a.BedID = b.BedID AND a.Status = 'Active'
+        LEFT JOIN Patient_Management.Patient p ON p.PatientID = a.PatientId 
+        LEFT JOIN Core_System.Staff s ON a.AdmittingPhysicianID = s.StaffID
+        WHERE 
+            b.BedID = @BedId
+            AND w.IsActive = 1;
+    END TRY
+    BEGIN CATCH
+        DECLARE @Error NVARCHAR(4000) = 'Error fetching bed details: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
+-- =============================================
+-- INPATIENT MANAGEMENT BedsTransfer
+-- =============================================
+--USP Create_BedTransfer
+CREATE PROCEDURE Create_BedTransfer
+    @AdmissionId INT,
+    @FromBedId INT,
+    @ToBedId INT,
+    @Reason NVARCHAR(200),
+    @OrderedBy INT
+AS BEGIN 
+    SET NOCOUNT ON 
+    BEGIN TRY
+        BEGIN TRANSACTION
+
+        IF @AdmissionId IS NULL OR @FromBedId IS NULL OR @ToBedId IS NULL OR @OrderedBy IS NULL
+            THROW 50001,'Admission ID, From Bed, To Bed and Ordered By are required',1;
+
+        IF NOT EXISTS (SELECT 1 FROM Inpatient_Management.Admissions WHERE AdmissionId = @AdmissionId AND Status = 'Active')
+            THROW 50002,'Active admission not found',1;
+
+        IF NOT EXISTS (SELECT 1 FROM Inpatient_Management.Beds WHERE BedID = @FromBedId AND BedStatus = 'Occupied')
+            THROW 50003,'From bed is not occupied',1;
+
+        IF NOT EXISTS (SELECT 1 FROM Inpatient_Management.Beds WHERE BedID = @ToBedId AND BedStatus = 'Available')
+            THROW 50004,'To bed is not available',1;
+
+        IF NOT EXISTS (SELECT 1 FROM Core_system.Staff WHERE StaffID = @OrderedBy AND IsActive = 1)
+            THROW 50005,'Ordering staff not found or inactive',1;
+
+        INSERT INTO Inpatient_Management.BedTransfers(
+            AdmissionId,
+            FromBedId,
+            ToBedId,
+            Reason,
+            OrderedBy
+        )
+        VALUES(
+            @AdmissionId,
+            @FromBedId,
+            @ToBedId,
+            @Reason,
+            @OrderedBy
+        );
+
+        UPDATE Inpatient_Management.Admissions SET BedID = @ToBedId WHERE AdmissionId = @AdmissionId;
+        UPDATE Inpatient_Management.Beds SET BedStatus = 'Available' WHERE BedID = @FromBedId;
+        UPDATE Inpatient_Management.Beds SET BedStatus = 'Occupied' WHERE BedID = @ToBedId;
+
+        COMMIT TRANSACTION
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0 
+            ROLLBACK TRANSACTION;
+        DECLARE @Error NVARCHAR(4000) = 'Error creating bed transfer: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
+--USP GetBedTransfers_ByAdmission
+CREATE PROCEDURE GetBedTransfers_ByAdmission
+    @AdmissionId INT
+AS BEGIN 
+    SET NOCOUNT ON 
+    BEGIN TRY
+        IF @AdmissionId IS NULL
+            THROW 50001,'Admission ID is required',1;
+
+        SELECT 
+            bt.TransferId,
+            bt.AdmissionId,
+            bt.FromBedId,
+            bt.ToBedId,
+            bt.TransferDate,
+            bt.Reason,
+            bt.OrderedBy,
+            fb.BedNumber AS FromBedNumber,
+            tb.BedNumber AS ToBedNumber,
+            fw.WardName AS FromWardName,
+            tw.WardName AS ToWardName,
+            s.FullName AS OrderedByName
+        FROM Inpatient_Management.BedTransfers bt
+        INNER JOIN Inpatient_Management.Beds fb ON bt.FromBedId = fb.BedID
+        INNER JOIN Inpatient_Management.Beds tb ON bt.ToBedId = tb.BedID
+        INNER JOIN Inpatient_Management.Wards fw ON fb.WardID = fw.WardID
+        INNER JOIN Inpatient_Management.Wards tw ON tb.WardID = tw.WardID
+        INNER JOIN Core_system.Staff s ON bt.OrderedBy = s.StaffID
+        WHERE bt.AdmissionId = @AdmissionId
+        ORDER BY bt.TransferDate DESC;
+
+    END TRY
+    BEGIN CATCH
+        DECLARE @Error NVARCHAR(4000) = 'Error fetching bed transfers: ' + ERROR_MESSAGE();
+        THROW 50000, @Error, 1;
+    END CATCH
+END
+GO
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

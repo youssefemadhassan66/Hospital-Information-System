@@ -415,16 +415,20 @@ CREATE TABLE Clinical_Management.NursingTasks (
 -- EMERGENCY MANAGEMENT
 -- =============================================
 -- Emergency Module
+-- EMERGENCY
 CREATE TABLE Emergency_Management.ER_Visit (
     ERVisitID INT IDENTITY(1,1) PRIMARY KEY,
-    EncounterID INT NOT NULL,
+    PatientID INT NOT NULL,
+    PhysicianID INT NOT NULL,
     TriageLevel INT CHECK (TriageLevel BETWEEN 1 AND 5),
     ChiefComplaint NVARCHAR(500) NULL,
     ArrivalMode NVARCHAR(20) CHECK (ArrivalMode IN ('Walk-in','Ambulance')),
     ArrivalDateTime DATETIME NOT NULL,
     Disposition NVARCHAR(20) CHECK (Disposition IN ('Discharge','Admit','Transfer','Deceased')),
-    CONSTRAINT FK_ER_Visit_EncounterID FOREIGN KEY (EncounterID) REFERENCES Clinical_Management.Encounters(EncounterId)
+    CONSTRAINT FK_ER_Visit_Patient FOREIGN KEY (PatientID) REFERENCES Patient_Management.Patient(PatientID),
+    CONSTRAINT FK_ER_Visit_Physician FOREIGN KEY (PhysicianID) REFERENCES Core_system.Staff(StaffID)
 );
+
 
 CREATE TABLE Emergency_Management.TriageAssessment (
     TriageID INT IDENTITY(1,1) PRIMARY KEY,
@@ -445,13 +449,16 @@ CREATE TABLE Emergency_Management.TriageAssessment (
 -- OUTPATIENT MANAGEMENT
 -- =============================================
 
+-- OUTPATIENT
 CREATE TABLE Outpatient_Management.OPD_Visit (
     OPDVisitID INT IDENTITY(1,1) PRIMARY KEY,
-    EncounterID INT NOT NULL,
+    PatientID INT NOT NULL,
+    PhysicianID INT NOT NULL,
     AppointmentID INT NULL,
     VisitReason NVARCHAR(500) NULL,
     VisitStatus NVARCHAR(20) CHECK (VisitStatus IN ('CheckedIn','Seen','Completed')),
-    CONSTRAINT FK_EncounterID_OPD_visit FOREIGN KEY (EncounterID) REFERENCES Clinical_Management.Encounters(EncounterId),
+    CONSTRAINT FK_OPD_Visit_Patient FOREIGN KEY (PatientID) REFERENCES Patient_Management.Patient(PatientID),
+    CONSTRAINT FK_OPD_Visit_Physician FOREIGN KEY (PhysicianID) REFERENCES Core_system.Staff(StaffID),
     CONSTRAINT FK_Appointment_OPD_Visit FOREIGN KEY (AppointmentID) REFERENCES Scheduling.Appointments(AppointmentId)
 );
 
